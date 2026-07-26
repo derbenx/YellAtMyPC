@@ -54,6 +54,7 @@ type AppState struct {
 	statusLabel     *widget.Label
 	transcribeArea  *readOnlyEntry
 	replyArea       *readOnlyEntry
+	summaryArea     *readOnlyEntry
 	serverStatus    *widget.Label
 	win             fyne.Window
 
@@ -122,6 +123,7 @@ func main() {
 	state.personalityEntryMain = widget.NewMultiLineEntry()
 	state.personalityEntryMain.SetText(state.serverConfig.PersonalityPrompt)
 	state.personalityEntryMain.SetMinRowsVisible(6)
+	state.personalityEntryMain.Wrapping = fyne.TextWrapWord // Word wrap enabled!
 	state.personalityEntryMain.OnChanged = func(text string) {
 		state.serverConfig.PersonalityPrompt = text
 	}
@@ -133,9 +135,13 @@ func main() {
 
 	state.transcribeArea = newReadOnlyEntry()
 	state.transcribeArea.SetPlaceHolder("Current status details and computer automation execution logs...")
+	state.transcribeArea.SetMinRowsVisible(4) // 4 lines visible height
 
 	state.replyArea = newReadOnlyEntry()
-	state.replyArea.SetPlaceHolder("AI reply and parsed JSON XML actions will appear here...")
+	state.replyArea.SetPlaceHolder("AI spoken reply will appear here...")
+
+	state.summaryArea = newReadOnlyEntry()
+	state.summaryArea.SetPlaceHolder("AI memory summary of PC state and conversation context...")
 
 	// Green Custom Hold Button
 	holdButton := newHoldButton("Push & Hold to Talk", func() {
@@ -145,19 +151,29 @@ func main() {
 	})
 
 	// Clean 50/50 grid split for Voice Chat tab
-	// Status label is placed exactly above the green custom holdButton!
+	// Left Column:
+	//   - AI Voice Controls Header
+	//   - AI Personality prompt input (word-wrapped, 6 lines)
+	//   - Status label (above PTT)
+	//   - Green PTT button
+	//   - System status log (4 lines tall, below PTT)
 	leftSide := container.NewVBox(
 		widget.NewLabelWithStyle("AI Voice Controls", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 		widget.NewLabel("AI Agent System & Personality Prompt:"),
 		state.personalityEntryMain,
 		state.statusLabel, // Status label right above the green PTT button
 		holdButton,
+		widget.NewLabel("System Status Log:"),
+		container.NewGridWrap(fyne.NewSize(330, 110), state.transcribeArea), // ~4 lines tall
 	)
 
+	// Right Column:
+	//   - Conversation Memory Summary (previously status log position)
+	//   - AI Agent Reply & Tool Outputs (previously reply position)
 	rightSide := container.NewVBox(
-		widget.NewLabel("System Automation Logs:"),
-		container.NewGridWrap(fyne.NewSize(330, 160), state.transcribeArea),
-		widget.NewLabel("AI Agent Reply & Tool Outputs:"),
+		widget.NewLabel("AI Memory & Conversation Summary:"),
+		container.NewGridWrap(fyne.NewSize(330, 160), state.summaryArea),
+		widget.NewLabel("AI Agent Spoken Reply Text:"),
 		container.NewGridWrap(fyne.NewSize(330, 160), state.replyArea),
 	)
 
@@ -614,6 +630,7 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 						state.lastSummary = act.Summary
 
 						fyne.Do(func() {
+							state.summaryArea.SetText(act.Summary)
 							state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[speak_reply summary]: %s", state.transcribeArea.Text, act.Summary))
 						})
 						continue
@@ -692,11 +709,14 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 					speechToPlay = customVoiceReply
 					if customVoiceSummary != "" {
 						fyne.Do(func() {
-							state.replyArea.SetText(fmt.Sprintf("%s\n\n--- Conversation Summary ---\n%s", state.replyArea.Text, customVoiceSummary))
+							state.replyArea.SetText(speechToPlay)
 						})
 					}
 				} else {
 					speechToPlay = removeXMLTags(reply)
+					fyne.Do(func() {
+						state.replyArea.SetText(speechToPlay)
+					})
 				}
 
 				fyne.Do(func() {
@@ -724,6 +744,8 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 			state.lastSummary = fmt.Sprintf("%s\nAI: %s", state.lastSummary, cleanSpeech)
 
 			fyne.Do(func() {
+				state.summaryArea.SetText(state.lastSummary)
+				state.replyArea.SetText(cleanSpeech)
 				state.statusLabel.SetText("💬 Playing voice reply...")
 			})
 			err = tts.Speak(cleanSpeech)

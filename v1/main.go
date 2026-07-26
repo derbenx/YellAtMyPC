@@ -51,6 +51,7 @@ type AppState struct {
 	statusLabel     *widget.Label
 	transcribeArea  *readOnlyEntry
 	replyArea       *readOnlyEntry
+	summaryArea     *readOnlyEntry
 	serverStatus    *widget.Label
 	win             fyne.Window
 
@@ -102,6 +103,7 @@ func main() {
 	state.personalityEntryMain = widget.NewMultiLineEntry()
 	state.personalityEntryMain.SetText(state.serverConfig.PersonalityPrompt)
 	state.personalityEntryMain.SetMinRowsVisible(6)
+	state.personalityEntryMain.Wrapping = fyne.TextWrapWord // Word wrap enabled!
 	state.personalityEntryMain.OnChanged = func(text string) {
 		state.serverConfig.PersonalityPrompt = text
 	}
@@ -113,9 +115,13 @@ func main() {
 
 	state.transcribeArea = newReadOnlyEntry()
 	state.transcribeArea.SetPlaceHolder("Current status details and process logs...")
+	state.transcribeArea.SetMinRowsVisible(4) // 4 lines visible height
 
 	state.replyArea = newReadOnlyEntry()
-	state.replyArea.SetPlaceHolder("AI reply will appear here...")
+	state.replyArea.SetPlaceHolder("AI spoken reply will appear here...")
+
+	state.summaryArea = newReadOnlyEntry()
+	state.summaryArea.SetPlaceHolder("Conversation memory context and turn summaries...")
 
 	// Create our custom green press-and-hold button widget
 	holdButton := newHoldButton("Push & Hold to Talk", func() {
@@ -125,19 +131,29 @@ func main() {
 	})
 
 	// Layout the Voice Chat page in a clean 50/50 Left/Right Dashboard split
-	// Status label is placed exactly above the holdButton!
+	// Left column:
+	//   - Title
+	//   - Personality Entry
+	//   - Status label (above PTT)
+	//   - PTT Button
+	//   - Status Log Area (4 lines tall, high-contrast, word wrapped)
 	leftSide := container.NewVBox(
 		widget.NewLabelWithStyle("AI Voice Controls", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 		widget.NewLabel("AI Personality Prompt:"),
 		state.personalityEntryMain,
 		state.statusLabel, // Idle Status right above the green PTT button
 		holdButton,
+		widget.NewLabel("System Status Log:"),
+		container.NewGridWrap(fyne.NewSize(320, 110), state.transcribeArea), // ~4 lines tall
 	)
 
+	// Right column:
+	//   - Conversation Summary (previously where status log was)
+	//   - Spoken AI Reply (below)
 	rightSide := container.NewVBox(
-		widget.NewLabel("System Status Log:"),
-		container.NewGridWrap(fyne.NewSize(320, 160), state.transcribeArea),
-		widget.NewLabel("AI Reply Text:"),
+		widget.NewLabel("Conversation Summary Context:"),
+		container.NewGridWrap(fyne.NewSize(320, 160), state.summaryArea),
+		widget.NewLabel("AI Spoken Reply Text:"),
 		container.NewGridWrap(fyne.NewSize(320, 160), state.replyArea),
 	)
 
@@ -522,12 +538,13 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 			return
 		}
 
-		// Keep a rolling context of dialogue history
+		// Keep a rolling context of dialogue history as our summary context
 		state.lastSummary = fmt.Sprintf("%s\nUser: [Spoken Input]\nAI: %s", state.lastSummary, reply)
 
 		fyne.Do(func() {
 			state.statusLabel.SetText("💬 Response received! Playing voice...")
 			state.replyArea.SetText(reply)
+			state.summaryArea.SetText(state.lastSummary)
 			state.transcribeArea.SetText(fmt.Sprintf("Success! Reply fetched from llama-server.\nPassing to system TTS engine..."))
 		})
 
