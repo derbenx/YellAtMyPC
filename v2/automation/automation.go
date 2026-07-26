@@ -129,14 +129,19 @@ func (e *AutomationEngine) PressKey(key string, modifiers []string) error {
 		return nil
 	}
 
-	// Prepare modifiers slice
-	mods := make([]interface{}, len(modifiers))
+	// Prepare standardized modifiers slice in the exact []string format expected by robotgo
+	stdModifiers := make([]string, len(modifiers))
 	for i, m := range modifiers {
-		mods[i] = strings.ToLower(strings.TrimSpace(m))
+		mLower := strings.ToLower(strings.TrimSpace(m))
+		// Standardize modifier name to "ctrl" to support Windows/Linux perfectly
+		if mLower == "control" || mLower == "ctrl" {
+			mLower = "ctrl"
+		}
+		stdModifiers[i] = mLower
 	}
 
-	if len(mods) > 0 {
-		robotgo.KeyTap(key, mods...)
+	if len(stdModifiers) > 0 {
+		robotgo.KeyTap(key, stdModifiers) // Pass standard []string directly
 	} else {
 		robotgo.KeyTap(key)
 	}
@@ -159,12 +164,21 @@ func (e *AutomationEngine) ClickMouse(button string, doubleClick bool) error {
 	return nil
 }
 
-// MoveMouse moves the cursor smoothly to absolute coordinates
+// MoveMouse moves the cursor instantly to absolute coordinates (lightning fast!)
 func (e *AutomationEngine) MoveMouse(x, y int) error {
 	if !e.EnableMouse {
 		return fmt.Errorf("mouse actions are disabled in safety checklist")
 	}
-	robotgo.MoveSmooth(x, y)
+	robotgo.Move(x, y)
+	return nil
+}
+
+// DragMouse holds down the mouse button and drags smoothly to destination coordinates
+func (e *AutomationEngine) DragMouse(x, y int) error {
+	if !e.EnableMouse {
+		return fmt.Errorf("mouse actions are disabled in safety checklist")
+	}
+	robotgo.DragSmooth(x, y)
 	return nil
 }
 
@@ -234,11 +248,11 @@ func (e *AutomationEngine) ReadSelection() (string, error) {
 	// Backup clipboard
 	oldClip, _ := robotgo.ReadAll()
 
-	// Tap copy shortcut
+	// Tap copy shortcut using explicit []string format
 	if runtime.GOOS == "darwin" {
-		robotgo.KeyTap("c", "command")
+		robotgo.KeyTap("c", []string{"command"})
 	} else {
-		robotgo.KeyTap("c", "control")
+		robotgo.KeyTap("c", []string{"ctrl"}) // Guaranteed Ctrl+C on Windows
 	}
 
 	// Let OS register clipboard update
