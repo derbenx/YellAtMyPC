@@ -150,26 +150,29 @@ func main() {
 		state.stopRecordingAndProcessFlow()
 	})
 
+	// Clear History Button
+	clearHistoryBtn := widget.NewButtonWithIcon("Clear Conversation History", theme.DeleteIcon(), func() {
+		state.lastSummary = ""
+		fyne.Do(func() {
+			state.summaryArea.SetText("")
+			state.replyArea.SetText("")
+			state.transcribeArea.SetText("Conversation history and memory context cleared.")
+		})
+		_ = tts.Speak("Conversation history cleared.")
+	})
+
 	// Clean 50/50 grid split for Voice Chat tab
-	// Left Column:
-	//   - AI Voice Controls Header
-	//   - AI Personality prompt input (word-wrapped, 6 lines)
-	//   - Status label (above PTT)
-	//   - Green PTT button
-	//   - System status log (4 lines tall, below PTT)
 	leftSide := container.NewVBox(
 		widget.NewLabelWithStyle("AI Voice Controls", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 		widget.NewLabel("AI Agent System & Personality Prompt:"),
 		state.personalityEntryMain,
+		clearHistoryBtn,
 		state.statusLabel, // Status label right above the green PTT button
 		holdButton,
 		widget.NewLabel("System Status Log:"),
 		container.NewGridWrap(fyne.NewSize(330, 110), state.transcribeArea), // ~4 lines tall
 	)
 
-	// Right Column:
-	//   - Conversation Memory Summary (previously status log position)
-	//   - AI Agent Reply & Tool Outputs (previously reply position)
 	rightSide := container.NewVBox(
 		widget.NewLabel("AI Memory & Conversation Summary:"),
 		container.NewGridWrap(fyne.NewSize(330, 160), state.summaryArea),
@@ -376,8 +379,12 @@ func main() {
 	state.scanFiles()
 	state.refreshMicrophones()
 
+	// Load persistent settings if available
+	state.loadPersistentSettings()
+
 	// Setup Global Hotkeys on background threads
 	go state.setupGlobalHotkey()
+	go state.setupBluetoothMediaHotkey()
 	go state.setupEmergencyStopHotkey()
 
 	myWindow.SetOnClosed(func() {
@@ -388,6 +395,39 @@ func main() {
 	})
 
 	myWindow.ShowAndRun()
+}
+
+func (state *AppState) loadPersistentSettings() {
+	set, err := ai.LoadSettings()
+	if err != nil {
+		log.Printf("No existing settings file found or load failed: %v", err)
+		return
+	}
+
+	state.serverConfig.IsLocal = set.IsLocal
+	state.serverConfig.Host = set.Host
+	state.serverConfig.Port = set.Port
+	state.serverConfig.PersonalityPrompt = set.PersonalityPrompt
+
+	fyne.Do(func() {
+		state.hostEntry.SetText(set.Host)
+		state.portEntry.SetText(set.Port)
+		state.personalityEntryMain.SetText(set.PersonalityPrompt)
+
+		if set.IsLocal {
+			state.localRadio.SetSelected("Local Server (Self-Hosted)")
+			state.ggufSelect.SetSelected(set.GgufFile)
+			state.mmprojSelect.SetSelected(set.MmprojFile)
+			state.llamaSelect.SetSelected(set.LlamaFile)
+		} else {
+			state.localRadio.SetSelected("Network / Remote Server")
+		}
+
+		if set.MicrophoneName != "" {
+			state.micSelect.SetSelected(set.MicrophoneName)
+		}
+	})
+	log.Println("Successfully loaded persistent settings from settings.json")
 }
 
 func (state *AppState) refreshMicrophones() {
@@ -475,7 +515,25 @@ func (state *AppState) saveConfiguration() {
 		state.serverConfig.MmprojFile = state.mmprojSelect.Selected
 	}
 
-	dialog.ShowInformation("Configuration Saved", "The app setup was updated successfully.", state.win)
+	// Write to shared settings file
+	settings := &ai.AppSettings{
+		IsLocal:           state.serverConfig.IsLocal,
+		Host:              state.hostEntry.Text,
+		Port:              state.portEntry.Text,
+		GgufFile:          state.ggufSelect.Selected,
+		MmprojFile:        state.mmprojSelect.Selected,
+		LlamaFile:         state.llamaSelect.Selected,
+		PersonalityPrompt: state.personalityEntryMain.Text,
+		MicrophoneName:    state.micSelect.Selected,
+	}
+
+	err := ai.SaveSettings(settings)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("failed to save settings.json: %v", err), state.win)
+		return
+	}
+
+	dialog.ShowInformation("Configuration Saved", "Setup configurations saved successfully to settings.json.", state.win)
 }
 
 func (state *AppState) launchLocalServer() {
@@ -800,6 +858,36 @@ func (state *AppState) setupGlobalHotkey() {
 			state.startRecordingFlow()
 		case <-hk.Keyup():
 			state.stopRecordingAndProcessFlow()
+		}
+	}
+}
+
+func (state *AppState) setupBluetoothMediaHotkey() {
+	// Register Bluetooth PTT toggle key: VK_MEDIA_PLAY_PAUSE (code 0xB3)
+	// We do not require modifiers so they can just press play/pause on hands-free headsets/car-kits
+	hkMedia := hotkey.New(nil, hotkey.Key(0xB3))
+	err := hkMedia.Register()
+	if err != nil {
+		log.Printf("Bluetooth Media Hotkey registration skipped (or not supported on this host): %v", err)
+		return
+	}
+
+	log.Println("Bluetooth PTT Handset Toggle registered! Tap your Jabra Play/Pause key to Start/Stop speaking.")
+
+	for {
+		select {
+		case <-hkMedia.Keydown():
+			state.recordingMutex.Lock()
+			recordingActive := state.isRecording
+			state.recordingMutex.Unlock()
+
+			if !recordingActive {
+				log.Println("Bluetooth Media button tapped: Starting recording...")
+				state.startRecordingFlow()
+			} else {
+				log.Println("Bluetooth Media button tapped: Stopping recording & submitting query...")
+				state.stopRecordingAndProcessFlow()
+			}
 		}
 	}
 }
