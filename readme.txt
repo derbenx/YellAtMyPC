@@ -24,9 +24,22 @@ V2 will let you ask the AI to do things; open programs, click on things. type, w
 How to Build and Compile
 ========================
 To build the application, make sure you have Go installed on your machine.
-Run the following commands:
-  go mod tidy
-  go build
+Since Fyne requires graphics hardware integration, CGo must be enabled and you must have a C compiler installed.
+
+On Windows:
+  1. Install MSYS2 (https://www.msys2.org/).
+  2. Install Mingw-w64 GCC by running the following in the MSYS2 terminal:
+       pacman -S mingw-w64-x86_64-toolchain
+  3. Ensure the bin directory of your Mingw-w64 installation (e.g. C:\msys64\mingw64\bin) is added to your Windows system PATH.
+  4. Ensure CGO_ENABLED is enabled. In your Command Prompt or PowerShell, run:
+       set CGO_ENABLED=1
+       go build -o YellAtMyPC.exe
+
+On Linux:
+  1. Install development packages:
+       sudo apt-get install -y libgl1-mesa-dev xorg-dev libegl1-mesa-dev libwayland-dev libxkbcommon-dev
+  2. Run:
+       CGO_ENABLED=1 go build
 
 ========================
 How to Run & Configure
@@ -38,6 +51,7 @@ How to Run & Configure
    - Select your GGUF model, multimodal mproj file, and Llama server executable.
    - Set the port (default: 8080) and click "Launch Local Llama" to start llama-server in the background.
 3. In the "Voice Chat" tab:
+   - Select or edit the "AI Personality Prompt" directly.
    - Click and hold the large "Push & Hold to Talk" button to speak, then release to send.
    - Alternatively, use the global hotkey: hold "Win+Space" to record anywhere, and release to submit query!
    - Your audio query is sent to llama-server, processed, and the response is spoken out loud.
