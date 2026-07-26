@@ -17,11 +17,11 @@ import (
 
 // ServerConfig holds the configuration details for llama-server.
 type ServerConfig struct {
-	IsLocal        bool
-	Host           string
-	Port           string
-	GgufFile       string
-	MmprojFile     string
+	IsLocal           bool
+	Host              string
+	Port              string
+	GgufFile          string
+	MmprojFile        string
 	PersonalityPrompt string
 }
 
@@ -81,7 +81,6 @@ func FindLocalFiles() (servers []string, ggufs []string, mmprojs []string) {
 // StartLocalServer starts a local llama-server in a background process.
 func (m *LlamaManager) StartLocalServer(binaryPath string, config ServerConfig) error {
 	if m.cmd != nil {
-		// Stop any existing process first
 		_ = m.StopServer()
 	}
 
@@ -100,7 +99,6 @@ func (m *LlamaManager) StartLocalServer(binaryPath string, config ServerConfig) 
 
 	cmd := exec.Command(absBinary, args...)
 
-	// Create log file for server output to help with diagnostics
 	logFile, err := os.Create("llama_server_output.log")
 	if err == nil {
 		cmd.Stdout = logFile
@@ -114,7 +112,6 @@ func (m *LlamaManager) StartLocalServer(binaryPath string, config ServerConfig) 
 
 	m.cmd = cmd
 
-	// Wait briefly to see if it crashed immediately
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
@@ -125,7 +122,6 @@ func (m *LlamaManager) StartLocalServer(binaryPath string, config ServerConfig) 
 		m.cmd = nil
 		return fmt.Errorf("llama-server exited immediately: %v", err)
 	case <-time.After(2 * time.Second):
-		// Seems to be running fine so far!
 		return nil
 	}
 }
@@ -137,7 +133,6 @@ func (m *LlamaManager) StopServer() error {
 		if runtime.GOOS == "windows" {
 			err = m.cmd.Process.Kill()
 		} else {
-			// On Unix, try sending SIGTERM first, then Kill if needed
 			_ = m.cmd.Process.Signal(os.Interrupt)
 			time.Sleep(500 * time.Millisecond)
 			err = m.cmd.Process.Kill()
@@ -153,12 +148,10 @@ func (m *LlamaManager) IsRunning() bool {
 	if m.cmd == nil || m.cmd.Process == nil {
 		return false
 	}
-	// On Unix, sending signal 0 checks process existence. On Windows we can try Wait or rely on process handle
 	if runtime.GOOS != "windows" {
 		err := m.cmd.Process.Signal(syscallSignalZero())
 		return err == nil
 	}
-	// Fallback for Windows or simple state tracking
 	return true
 }
 
@@ -195,7 +188,7 @@ type ChatCompletionResponse struct {
 }
 
 // SendAudioQuery encodes a raw WAV file to base64 and posts it to the /v1/chat/completions endpoint.
-func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string) (string, error) {
+func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string, lastSummary string) (string, error) {
 	wavData, err := os.ReadFile(wavPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read WAV file: %w", err)
@@ -203,9 +196,14 @@ func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string) (stri
 
 	b64Wav := base64.StdEncoding.EncodeToString(wavData)
 
-	personalityPrompt := config.PersonalityPrompt
-	if personalityPrompt == "" {
-		personalityPrompt = "You are a helpful local PC voice assistant. Respond concisely to the spoken audio."
+	systemPrompt := config.PersonalityPrompt
+	if systemPrompt == "" {
+		systemPrompt = "You are a helpful local PC voice assistant. Respond concisely."
+	}
+
+	userText := "Here is the user's spoken audio query."
+	if lastSummary != "" {
+		userText = fmt.Sprintf("Running Context Summary of previous conversation turns:\n%s\n\nPlease incorporate this history into your response.", lastSummary)
 	}
 
 	reqPayload := ChatCompletionRequest{
@@ -215,7 +213,11 @@ func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string) (stri
 				Content: []ChatContent{
 					{
 						Type: "text",
-						Text: personalityPrompt,
+						Text: systemPrompt,
+					},
+					{
+						Type: "text",
+						Text: userText,
 					},
 					{
 						Type: "input_audio",
@@ -241,7 +243,6 @@ func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string) (stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// 60-second timeout for local model audio inference
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -237,7 +237,7 @@ type ChatCompletionResponse struct {
 }
 
 // SendAudioQuery encodes a raw WAV file to base64 and posts it to the /v1/chat/completions endpoint.
-func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string) (string, error) {
+func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string, lastSummary string) (string, error) {
 	wavData, err := os.ReadFile(wavPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read WAV file: %w", err)
@@ -271,12 +271,17 @@ Supported Tools:
 7. Read copied text selection:
    <action>{"tool": "read_selection"}</action>
 8. Finalize spoken reply & summarize conversation status:
-   <action>{"tool": "speak_reply", "summary": "A concise bullet-point summary of what actions were taken and the state of the conversation.", "reply": "The exact voice text that you want played out loud to the user via TTS."}</action>
+   <action>{"tool": "speak_reply", "summary": "An updated concise bullet-point summary of what actions were taken and the state of the conversation.", "reply": "The exact voice text that you want played out loud to the user via TTS. Do not include any actions inside this reply, just plain dialog text."}</action>
 
 Always finalize your multi-step actions by appending the 'speak_reply' tool call. This allows the system to clearly log the summary of what was accomplished while reading your reply out loud. Ensure the XML block has exact tag syntax.
 `
 
 	finalPrompt := fmt.Sprintf("%s\n\n%s", systemPrompt, toolInstructions)
+
+	userText := "Here is the user's spoken audio query."
+	if lastSummary != "" {
+		userText = fmt.Sprintf("Running Context Summary of previous turns:\n%s\n\nPlease incorporate this history, execute any new requested actions, update the summary, and output a new speak_reply.", lastSummary)
+	}
 
 	reqPayload := ChatCompletionRequest{
 		Messages: []ChatMessage{
@@ -286,6 +291,10 @@ Always finalize your multi-step actions by appending the 'speak_reply' tool call
 					{
 						Type: "text",
 						Text: finalPrompt,
+					},
+					{
+						Type: "text",
+						Text: userText,
 					},
 					{
 						Type: "input_audio",

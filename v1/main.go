@@ -25,6 +25,23 @@ import (
 	"golang.design/x/hotkey"
 )
 
+type readOnlyEntry struct {
+	widget.Entry
+}
+
+func newReadOnlyEntry() *readOnlyEntry {
+	e := &readOnlyEntry{}
+	e.MultiLine = true
+	e.Wrapping = fyne.TextWrapWord
+	e.ExtendBaseWidget(e)
+	return e
+}
+
+func (e *readOnlyEntry) TypedRune(r rune)            {}
+func (e *readOnlyEntry) TypedKey(k *fyne.KeyEvent)    {}
+func (e *readOnlyEntry) FocusGained()                 {}
+func (e *readOnlyEntry) FocusLost()                   {}
+
 type AppState struct {
 	serverConfig    ai.ServerConfig
 	llamaMgr        *ai.LlamaManager
@@ -32,10 +49,13 @@ type AppState struct {
 	isRecording     bool
 	recordingMutex  sync.Mutex
 	statusLabel     *widget.Label
-	transcribeArea  *widget.Entry
-	replyArea       *widget.Entry
+	transcribeArea  *readOnlyEntry
+	replyArea       *readOnlyEntry
 	serverStatus    *widget.Label
 	win             fyne.Window
+
+	// Context Memory
+	lastSummary string
 
 	// Active selected microphone
 	selectedDeviceID unsafe.Pointer
@@ -81,7 +101,6 @@ func main() {
 	// Setup Personality multi-line input box directly on the Main Page
 	state.personalityEntryMain = widget.NewMultiLineEntry()
 	state.personalityEntryMain.SetText(state.serverConfig.PersonalityPrompt)
-	// Give it 6 visible lines of space
 	state.personalityEntryMain.SetMinRowsVisible(6)
 	state.personalityEntryMain.OnChanged = func(text string) {
 		state.serverConfig.PersonalityPrompt = text
@@ -92,13 +111,11 @@ func main() {
 	state.statusLabel.Alignment = fyne.TextAlignCenter
 	state.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	state.transcribeArea = widget.NewMultiLineEntry()
+	state.transcribeArea = newReadOnlyEntry()
 	state.transcribeArea.SetPlaceHolder("Current status details and process logs...")
-	state.transcribeArea.Disable()
 
-	state.replyArea = widget.NewMultiLineEntry()
+	state.replyArea = newReadOnlyEntry()
 	state.replyArea.SetPlaceHolder("AI reply will appear here...")
-	state.replyArea.Disable()
 
 	// Create our custom green press-and-hold button widget
 	holdButton := newHoldButton("Push & Hold to Talk", func() {
@@ -108,11 +125,12 @@ func main() {
 	})
 
 	// Layout the Voice Chat page in a clean 50/50 Left/Right Dashboard split
+	// Status label is placed exactly above the holdButton!
 	leftSide := container.NewVBox(
 		widget.NewLabelWithStyle("AI Voice Controls", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		state.statusLabel,
 		widget.NewLabel("AI Personality Prompt:"),
 		state.personalityEntryMain,
+		state.statusLabel, // Idle Status right above the green PTT button
 		holdButton,
 	)
 
@@ -495,7 +513,7 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 		})
 
 		// Post audio completions to llama-server
-		reply, err := state.llamaMgr.SendAudioQuery(state.serverConfig, tempWav)
+		reply, err := state.llamaMgr.SendAudioQuery(state.serverConfig, tempWav, state.lastSummary)
 		if err != nil {
 			fyne.Do(func() {
 				state.statusLabel.SetText("Error querying Llama-Server.")
@@ -504,10 +522,13 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 			return
 		}
 
+		// Keep a rolling context of dialogue history
+		state.lastSummary = fmt.Sprintf("%s\nUser: [Spoken Input]\nAI: %s", state.lastSummary, reply)
+
 		fyne.Do(func() {
 			state.statusLabel.SetText("💬 Response received! Playing voice...")
 			state.replyArea.SetText(reply)
-			state.transcribeArea.SetText(fmt.Sprintf("Success! Reply fetched from llama-server in standard chat completion format.\nPassing to system TTS engine..."))
+			state.transcribeArea.SetText(fmt.Sprintf("Success! Reply fetched from llama-server.\nPassing to system TTS engine..."))
 		})
 
 		// Speak response out loud
@@ -526,9 +547,6 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 
 func (state *AppState) setupGlobalHotkey() {
 	// Register global hotkey: Win + Space
-	// Note: Win + Space requires ModWin on windows, and is a modifier value of 0x8.
-	// Since gobuild on Linux won't have hotkey.ModWin inside the public API if it's windows-only,
-	// let's use the constant 0x08 for ModWin. Or we can use ModAlt or similar if ModWin is undefined.
 	hk := hotkey.New([]hotkey.Modifier{hotkey.Modifier(0x08)}, hotkey.KeySpace)
 	err := hk.Register()
 	if err != nil {

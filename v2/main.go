@@ -28,6 +28,23 @@ import (
 	"golang.design/x/hotkey"
 )
 
+type readOnlyEntry struct {
+	widget.Entry
+}
+
+func newReadOnlyEntry() *readOnlyEntry {
+	e := &readOnlyEntry{}
+	e.MultiLine = true
+	e.Wrapping = fyne.TextWrapWord
+	e.ExtendBaseWidget(e)
+	return e
+}
+
+func (e *readOnlyEntry) TypedRune(r rune)            {}
+func (e *readOnlyEntry) TypedKey(k *fyne.KeyEvent)    {}
+func (e *readOnlyEntry) FocusGained()                 {}
+func (e *readOnlyEntry) FocusLost()                   {}
+
 type AppState struct {
 	serverConfig    ai.ServerConfig
 	llamaMgr        *ai.LlamaManager
@@ -35,10 +52,13 @@ type AppState struct {
 	isRecording     bool
 	recordingMutex  sync.Mutex
 	statusLabel     *widget.Label
-	transcribeArea  *widget.Entry
-	replyArea       *widget.Entry
+	transcribeArea  *readOnlyEntry
+	replyArea       *readOnlyEntry
 	serverStatus    *widget.Label
 	win             fyne.Window
+
+	// Context Memory
+	lastSummary string
 
 	// Active selected microphone
 	selectedDeviceID unsafe.Pointer
@@ -111,13 +131,11 @@ func main() {
 	state.statusLabel.Alignment = fyne.TextAlignCenter
 	state.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	state.transcribeArea = widget.NewMultiLineEntry()
+	state.transcribeArea = newReadOnlyEntry()
 	state.transcribeArea.SetPlaceHolder("Current status details and computer automation execution logs...")
-	state.transcribeArea.Disable()
 
-	state.replyArea = widget.NewMultiLineEntry()
+	state.replyArea = newReadOnlyEntry()
 	state.replyArea.SetPlaceHolder("AI reply and parsed JSON XML actions will appear here...")
-	state.replyArea.Disable()
 
 	// Green Custom Hold Button
 	holdButton := newHoldButton("Push & Hold to Talk", func() {
@@ -127,11 +145,12 @@ func main() {
 	})
 
 	// Clean 50/50 grid split for Voice Chat tab
+	// Status label is placed exactly above the green custom holdButton!
 	leftSide := container.NewVBox(
 		widget.NewLabelWithStyle("AI Voice Controls", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		state.statusLabel,
 		widget.NewLabel("AI Agent System & Personality Prompt:"),
 		state.personalityEntryMain,
+		state.statusLabel, // Status label right above the green PTT button
 		holdButton,
 	)
 
@@ -559,8 +578,8 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 			state.transcribeArea.SetText(fmt.Sprintf("Audio saved to %s.\nSending base64 audio query to Llama-Server...", tempWav))
 		})
 
-		// Post audio completions to llama-server
-		reply, err := state.llamaMgr.SendAudioQuery(state.serverConfig, tempWav)
+		// Post audio completions to llama-server (passing the last running context summary)
+		reply, err := state.llamaMgr.SendAudioQuery(state.serverConfig, tempWav, state.lastSummary)
 		if err != nil {
 			fyne.Do(func() {
 				state.statusLabel.SetText("Error querying Llama-Server.")
@@ -590,6 +609,10 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 					if act.Tool == "speak_reply" {
 						customVoiceReply = act.Reply
 						customVoiceSummary = act.Summary
+
+						// Store this updated summary into our context memory so it's passed on the next message
+						state.lastSummary = act.Summary
+
 						fyne.Do(func() {
 							state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[speak_reply summary]: %s", state.transcribeArea.Text, act.Summary))
 						})
@@ -696,6 +719,10 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 				state.transcribeArea.SetText("No computer tool calls parsed in response. Normal dialogue flow.")
 			})
 			cleanSpeech := removeXMLTags(reply)
+
+			// Store the reply as the summary fallback context if tool wasn't invoked
+			state.lastSummary = fmt.Sprintf("%s\nAI: %s", state.lastSummary, cleanSpeech)
+
 			fyne.Do(func() {
 				state.statusLabel.SetText("💬 Playing voice reply...")
 			})
