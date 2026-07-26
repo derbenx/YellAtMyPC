@@ -166,7 +166,7 @@ type Action struct {
 	X         int      `json:"x,omitempty"`
 	Y         int      `json:"y,omitempty"`
 	Name      string   `json:"name,omitempty"`
-	Summary   string   `json:"summary,omitempty"` // Bullet-point or state summary
+	Summary   string   `json:"summary,omitempty"` // Cumulative summary of the entire conversation
 	Reply     string   `json:"reply,omitempty"`   // Spoken text to feed directly to TTS
 }
 
@@ -271,16 +271,16 @@ Supported Tools:
 7. Read copied text selection:
    <action>{"tool": "read_selection"}</action>
 8. Finalize spoken reply & summarize conversation status:
-   <action>{"tool": "speak_reply", "summary": "An updated concise bullet-point summary of what actions were taken and the state of the conversation.", "reply": "The exact voice text that you want played out loud to the user via TTS. Do not include any actions inside this reply, just plain dialog text."}</action>
+   <action>{"tool": "speak_reply", "summary": "An updated cumulative summary of the entire conversation history, incorporating all previous summaries and the current spoken turn.", "reply": "The exact voice text that you want played out loud to the user via TTS. Ensure this reply is purely plain dialogue text, with absolutely no actions or JSON tags inside the reply field itself."}</action>
 
-Always finalize your multi-step actions by appending the 'speak_reply' tool call. This allows the system to clearly log the summary of what was accomplished while reading your reply out loud. Ensure the XML block has exact tag syntax.
+Always finalize your response by appending the 'speak_reply' tool call. Ensure the XML block has exact tag syntax.
 `
 
 	finalPrompt := fmt.Sprintf("%s\n\n%s", systemPrompt, toolInstructions)
 
-	userText := "Here is the user's spoken audio query."
+	userText := "First turn. No previous context exists."
 	if lastSummary != "" {
-		userText = fmt.Sprintf("Running Context Summary of previous turns:\n%s\n\nPlease incorporate this history, execute any new requested actions, update the summary, and output a new speak_reply.", lastSummary)
+		userText = fmt.Sprintf("Cumulative Summary of the entire conversation history so far:\n%s\n\nPlease incorporate this history context, process the new audio prompt, execute any requested PC tools, and output an updated, expanded cumulative summary inside the 'speak_reply' tool call.", lastSummary)
 	}
 
 	reqPayload := ChatCompletionRequest{

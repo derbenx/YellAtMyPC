@@ -187,6 +187,25 @@ type ChatCompletionResponse struct {
 	} `json:"error,omitempty"`
 }
 
+// ParseXMLTag parses custom XML tags like <summary> or <reply>
+func ParseXMLTag(text, tag string) string {
+	startTag := fmt.Sprintf("<%s>", tag)
+	endTag := fmt.Sprintf("</%s>", tag)
+
+	startIdx := strings.Index(text, startTag)
+	if startIdx == -1 {
+		return ""
+	}
+	startIdx += len(startTag)
+
+	endIdx := strings.Index(text[startIdx:], endTag)
+	if endIdx == -1 {
+		return ""
+	}
+
+	return strings.TrimSpace(text[startIdx : startIdx+endIdx])
+}
+
 // SendAudioQuery encodes a raw WAV file to base64 and posts it to the /v1/chat/completions endpoint.
 func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string, lastSummary string) (string, error) {
 	wavData, err := os.ReadFile(wavPath)
@@ -201,9 +220,20 @@ func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string, lastS
 		systemPrompt = "You are a helpful local PC voice assistant. Respond concisely."
 	}
 
-	userText := "Here is the user's spoken audio query."
+	instructions := `
+You are a concise voice assistant.
+For every turn, you must respond inside a structured format utilizing two XML blocks:
+1. <summary>An updated cumulative summary of the entire conversation history so far, incorporating all previous summaries and the current turn.</summary>
+2. <reply>The exact spoken dialogue response to the user's latest query. Make sure this reply contains purely plain dialogue text, with absolutely no XML tags inside the reply block itself.</reply>
+
+Keep both sections clean and structured.
+`
+
+	finalPrompt := fmt.Sprintf("%s\n\n%s", systemPrompt, instructions)
+
+	userText := "First turn. No previous context exists."
 	if lastSummary != "" {
-		userText = fmt.Sprintf("Running Context Summary of previous conversation turns:\n%s\n\nPlease incorporate this history into your response.", lastSummary)
+		userText = fmt.Sprintf("Cumulative Summary of the entire conversation history so far:\n%s\n\nPlease incorporate this history context, process the new audio prompt, and output an updated, expanded cumulative summary inside <summary> and your voice response inside <reply>.", lastSummary)
 	}
 
 	reqPayload := ChatCompletionRequest{
@@ -213,7 +243,7 @@ func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string, lastS
 				Content: []ChatContent{
 					{
 						Type: "text",
-						Text: systemPrompt,
+						Text: finalPrompt,
 					},
 					{
 						Type: "text",

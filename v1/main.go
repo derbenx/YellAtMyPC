@@ -151,7 +151,7 @@ func main() {
 	//   - Conversation Summary (previously where status log was)
 	//   - Spoken AI Reply (below)
 	rightSide := container.NewVBox(
-		widget.NewLabel("Conversation Summary Context:"),
+		widget.NewLabel("AI Memory & Conversation Summary:"),
 		container.NewGridWrap(fyne.NewSize(320, 160), state.summaryArea),
 		widget.NewLabel("AI Spoken Reply Text:"),
 		container.NewGridWrap(fyne.NewSize(320, 160), state.replyArea),
@@ -538,18 +538,29 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 			return
 		}
 
-		// Keep a rolling context of dialogue history as our summary context
-		state.lastSummary = fmt.Sprintf("%s\nUser: [Spoken Input]\nAI: %s", state.lastSummary, reply)
+		// Parse XML custom summary and reply tags for dialogue memory context
+		parsedSummary := ai.ParseXMLTag(reply, "summary")
+		parsedReply := ai.ParseXMLTag(reply, "reply")
+
+		var speechToPlay string
+		if parsedSummary != "" && parsedReply != "" {
+			state.lastSummary = parsedSummary
+			speechToPlay = parsedReply
+		} else {
+			// Fallback if model output is direct text
+			state.lastSummary = fmt.Sprintf("%s\nAI: %s", state.lastSummary, reply)
+			speechToPlay = reply
+		}
 
 		fyne.Do(func() {
 			state.statusLabel.SetText("💬 Response received! Playing voice...")
-			state.replyArea.SetText(reply)
+			state.replyArea.SetText(speechToPlay)
 			state.summaryArea.SetText(state.lastSummary)
 			state.transcribeArea.SetText(fmt.Sprintf("Success! Reply fetched from llama-server.\nPassing to system TTS engine..."))
 		})
 
 		// Speak response out loud
-		err = tts.Speak(reply)
+		err = tts.Speak(speechToPlay)
 		if err != nil {
 			fyne.Do(func() {
 				state.transcribeArea.SetText(fmt.Sprintf("%s\nTTS Warning: %v", state.transcribeArea.Text, err))
