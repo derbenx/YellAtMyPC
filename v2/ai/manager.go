@@ -166,6 +166,8 @@ type Action struct {
 	X         int      `json:"x,omitempty"`
 	Y         int      `json:"y,omitempty"`
 	Name      string   `json:"name,omitempty"`
+	Summary   string   `json:"summary,omitempty"` // Bullet-point or state summary
+	Reply     string   `json:"reply,omitempty"`   // Spoken text to feed directly to TTS
 }
 
 // ParseActions extracts JSON tool action calls enclosed inside `<action>...</action>` tags
@@ -195,7 +197,6 @@ func ParseActions(reply string) []Action {
 		if err := json.Unmarshal([]byte(jsonStr), &act); err == nil {
 			actions = append(actions, act)
 		} else {
-			// Print parsing warning to stdout for debug
 			fmt.Printf("Debug: Action parse failed for string '%s': %v\n", jsonStr, err)
 		}
 	}
@@ -249,7 +250,6 @@ func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string) (stri
 		systemPrompt = "You are a helpful local PC voice assistant with access to computer tools. Respond concisely."
 	}
 
-	// Always instruct Gemma-4 on our tool calling interface to enable native execution
 	toolInstructions := `
 You are a highly capable PC Automation Agent that can execute actions on the user's computer.
 If the user asks you to perform a task (e.g. click somewhere, type text, or open an app), respond with a clear spoken text reply AND append one or more executable JSON XML <action> tags at the end of your response.
@@ -270,8 +270,10 @@ Supported Tools:
    <action>{"tool": "take_screenshot"}</action>
 7. Read copied text selection:
    <action>{"tool": "read_selection"}</action>
+8. Finalize spoken reply & summarize conversation status:
+   <action>{"tool": "speak_reply", "summary": "A concise bullet-point summary of what actions were taken and the state of the conversation.", "reply": "The exact voice text that you want played out loud to the user via TTS."}</action>
 
-Always reply concisely and specify actions sequentially if multi-step control is needed. Ensure the XML block has exact tag syntax.
+Always finalize your multi-step actions by appending the 'speak_reply' tool call. This allows the system to clearly log the summary of what was accomplished while reading your reply out loud. Ensure the XML block has exact tag syntax.
 `
 
 	finalPrompt := fmt.Sprintf("%s\n\n%s", systemPrompt, toolInstructions)

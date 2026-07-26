@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"YellAtMyPC/v2/ai"
 	"YellAtMyPC/v2/audio"
@@ -39,6 +40,11 @@ type AppState struct {
 	serverStatus    *widget.Label
 	win             fyne.Window
 
+	// Active selected microphone
+	selectedDeviceID unsafe.Pointer
+	micSelect        *widget.Select
+	micDeviceList    []audio.CaptureDevice
+
 	// Automation and Safety checklist
 	engine      *automation.AutomationEngine
 	loopTracker *automation.LoopTracker
@@ -55,24 +61,23 @@ type AppState struct {
 	newAppPathEntry    *widget.Entry
 
 	// Personality Inputs (synchronized)
-	personalityEntryMain  *widget.Entry
-	personalityEntrySetup *widget.Entry
+	personalityEntryMain *widget.Entry
 
 	// Setup controls
-	localRadio      *widget.RadioGroup
-	hostEntry       *widget.Entry
-	portEntry       *widget.Entry
-	ggufSelect      *widget.Select
-	mmprojSelect    *widget.Select
-	llamaSelect     *widget.Select
-	launchBtn       *widget.Button
-	saveBtn         *widget.Button
+	localRadio   *widget.RadioGroup
+	hostEntry    *widget.Entry
+	portEntry    *widget.Entry
+	ggufSelect   *widget.Select
+	mmprojSelect *widget.Select
+	llamaSelect  *widget.Select
+	launchBtn    *widget.Button
+	saveBtn      *widget.Button
 }
 
 func main() {
 	myApp := app.NewWithID("com.yellatmypc.v2.app")
 	myWindow := myApp.NewWindow("YellAtMyPC V2 - AI Computer Agent")
-	myWindow.Resize(fyne.NewSize(700, 560))
+	myWindow.Resize(fyne.NewSize(720, 560))
 
 	recorder, err := audio.NewRecorder()
 	if err != nil {
@@ -81,9 +86,9 @@ func main() {
 
 	state := &AppState{
 		serverConfig: ai.ServerConfig{
-			IsLocal:        true,
-			Host:           "127.0.0.1",
-			Port:           "8080",
+			IsLocal:           true,
+			Host:              "127.0.0.1",
+			Port:              "8080",
 			PersonalityPrompt: "You are a helpful local PC voice assistant with access to computer tools. Respond concisely.",
 		},
 		llamaMgr:    ai.NewLlamaManager(),
@@ -93,23 +98,12 @@ func main() {
 		win:         myWindow,
 	}
 
-	// Synchronize personality inputs
-	state.personalityEntryMain = widget.NewEntry()
+	// Setup Personality input direkt on Voice Chat page (6 visible lines)
+	state.personalityEntryMain = widget.NewMultiLineEntry()
 	state.personalityEntryMain.SetText(state.serverConfig.PersonalityPrompt)
+	state.personalityEntryMain.SetMinRowsVisible(6)
 	state.personalityEntryMain.OnChanged = func(text string) {
 		state.serverConfig.PersonalityPrompt = text
-		if state.personalityEntrySetup.Text != text {
-			state.personalityEntrySetup.SetText(text)
-		}
-	}
-
-	state.personalityEntrySetup = widget.NewEntry()
-	state.personalityEntrySetup.SetText(state.serverConfig.PersonalityPrompt)
-	state.personalityEntrySetup.OnChanged = func(text string) {
-		state.serverConfig.PersonalityPrompt = text
-		if state.personalityEntryMain.Text != text {
-			state.personalityEntryMain.SetText(text)
-		}
 	}
 
 	// Build Tab 1: Main Push To Talk / Chat Automation Tab
@@ -125,25 +119,32 @@ func main() {
 	state.replyArea.SetPlaceHolder("AI reply and parsed JSON XML actions will appear here...")
 	state.replyArea.Disable()
 
+	// Green Custom Hold Button
 	holdButton := newHoldButton("Push & Hold to Talk", func() {
 		state.startRecordingFlow()
 	}, func() {
 		state.stopRecordingAndProcessFlow()
 	})
 
-	mainTabContent := container.NewVBox(
-		widget.NewCard("Voice Assistant & Automation Agent", "Press and hold to talk, release to execute PC actions",
-			container.NewVBox(
-				state.statusLabel,
-				widget.NewLabel("AI Agent System & Personality Prompt:"),
-				state.personalityEntryMain,
-				container.NewGridWithColumns(2,
-					container.NewVBox(widget.NewLabel("System Automation Logs:"), container.NewGridWrap(fyne.NewSize(310, 150), state.transcribeArea)),
-					container.NewVBox(widget.NewLabel("AI Agent Reply & Tool Outputs:"), container.NewGridWrap(fyne.NewSize(310, 150), state.replyArea)),
-				),
-				holdButton,
-			),
-		),
+	// Clean 50/50 grid split for Voice Chat tab
+	leftSide := container.NewVBox(
+		widget.NewLabelWithStyle("AI Voice Controls", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		state.statusLabel,
+		widget.NewLabel("AI Agent System & Personality Prompt:"),
+		state.personalityEntryMain,
+		holdButton,
+	)
+
+	rightSide := container.NewVBox(
+		widget.NewLabel("System Automation Logs:"),
+		container.NewGridWrap(fyne.NewSize(330, 160), state.transcribeArea),
+		widget.NewLabel("AI Agent Reply & Tool Outputs:"),
+		container.NewGridWrap(fyne.NewSize(330, 160), state.replyArea),
+	)
+
+	mainTabContent := container.NewBorder(
+		nil, nil, nil, nil,
+		container.NewGridWithColumns(2, leftSide, rightSide),
 	)
 
 	// Build Tab 2: Safety Checklist Tab
@@ -225,22 +226,41 @@ func main() {
 	state.localRadio = widget.NewRadioGroup([]string{"Local Server (Self-Hosted)", "Network / Remote Server"}, func(selected string) {
 		if selected == "Local Server (Self-Hosted)" {
 			state.serverConfig.IsLocal = true
-			state.hostEntry.SetText("127.0.0.1")
-			state.hostEntry.Disable()
-			state.ggufSelect.Enable()
-			state.mmprojSelect.Enable()
-			state.llamaSelect.Enable()
-			state.launchBtn.Enable()
+			if state.hostEntry != nil {
+				state.hostEntry.SetText("127.0.0.1")
+				state.hostEntry.Disable()
+			}
+			if state.ggufSelect != nil {
+				state.ggufSelect.Enable()
+			}
+			if state.mmprojSelect != nil {
+				state.mmprojSelect.Enable()
+			}
+			if state.llamaSelect != nil {
+				state.llamaSelect.Enable()
+			}
+			if state.launchBtn != nil {
+				state.launchBtn.Enable()
+			}
 		} else {
 			state.serverConfig.IsLocal = false
-			state.hostEntry.Enable()
-			state.ggufSelect.Disable()
-			state.mmprojSelect.Disable()
-			state.llamaSelect.Disable()
-			state.launchBtn.Disable()
+			if state.hostEntry != nil {
+				state.hostEntry.Enable()
+			}
+			if state.ggufSelect != nil {
+				state.ggufSelect.Disable()
+			}
+			if state.mmprojSelect != nil {
+				state.mmprojSelect.Disable()
+			}
+			if state.llamaSelect != nil {
+				state.llamaSelect.Disable()
+			}
+			if state.launchBtn != nil {
+				state.launchBtn.Disable()
+			}
 		}
 	})
-	state.localRadio.SetSelected("Local Server (Self-Hosted)")
 
 	state.hostEntry = widget.NewEntry()
 	state.hostEntry.SetText("127.0.0.1")
@@ -248,6 +268,17 @@ func main() {
 
 	state.portEntry = widget.NewEntry()
 	state.portEntry.SetText("8080")
+
+	// Microphone select dropdown on setup
+	state.micSelect = widget.NewSelect(nil, func(selected string) {
+		for _, dev := range state.micDeviceList {
+			if dev.Name == selected {
+				state.selectedDeviceID = dev.ID
+				log.Printf("Selected capture microphone: %s", selected)
+				break
+			}
+		}
+	})
 
 	state.ggufSelect = widget.NewSelect(nil, nil)
 	state.mmprojSelect = widget.NewSelect(nil, nil)
@@ -257,12 +288,15 @@ func main() {
 		state.launchLocalServer()
 	})
 
+	state.localRadio.SetSelected("Local Server (Self-Hosted)")
+
 	state.saveBtn = widget.NewButtonWithIcon("Save Configuration", theme.DocumentSaveIcon(), func() {
 		state.saveConfiguration()
 	})
 
 	refreshBtn := widget.NewButtonWithIcon("Scan relative directories", theme.ViewRefreshIcon(), func() {
 		state.scanFiles()
+		state.refreshMicrophones()
 	})
 
 	configTabContent := container.NewVScroll(container.NewVBox(
@@ -271,8 +305,8 @@ func main() {
 			container.NewVBox(widget.NewLabel("Host IP:"), state.hostEntry),
 			container.NewVBox(widget.NewLabel("Port:"), state.portEntry),
 		),
-		widget.NewLabel("Personality:"),
-		state.personalityEntrySetup,
+		widget.NewLabel("Select Microphone:"),
+		state.micSelect,
 		widget.NewCard("Local Llama discovery (relative paths)", "",
 			container.NewVBox(
 				state.serverStatus,
@@ -303,8 +337,9 @@ func main() {
 
 	myWindow.SetContent(tabs)
 
-	// Scan folders on startup
+	// Scan folders and microphones on startup
 	state.scanFiles()
+	state.refreshMicrophones()
 
 	// Setup Global Hotkeys on background threads
 	go state.setupGlobalHotkey()
@@ -318,6 +353,30 @@ func main() {
 	})
 
 	myWindow.ShowAndRun()
+}
+
+func (state *AppState) refreshMicrophones() {
+	if state.recorder == nil {
+		return
+	}
+	devices, err := state.recorder.GetCaptureDevices()
+	if err != nil {
+		log.Printf("Error scanning microphones: %v", err)
+		return
+	}
+	state.micDeviceList = devices
+
+	var options []string
+	for _, d := range devices {
+		options = append(options, d.Name)
+	}
+
+	fyne.Do(func() {
+		state.micSelect.Options = options
+		if len(options) > 0 {
+			state.micSelect.SetSelected(options[0])
+		}
+	})
 }
 
 func (state *AppState) refreshAllowlistGUI() {
@@ -346,33 +405,35 @@ func (state *AppState) refreshAllowlistGUI() {
 func (state *AppState) scanFiles() {
 	servers, ggufs, mmprojs := ai.FindLocalFiles()
 
-	state.ggufSelect.Options = ggufs
-	state.mmprojSelect.Options = mmprojs
-	state.llamaSelect.Options = servers
+	fyne.Do(func() {
+		state.ggufSelect.Options = ggufs
+		state.mmprojSelect.Options = mmprojs
+		state.llamaSelect.Options = servers
 
-	if len(ggufs) > 0 {
-		state.ggufSelect.SetSelected(ggufs[0])
-	} else {
-		state.ggufSelect.ClearSelected()
-	}
+		if len(ggufs) > 0 {
+			state.ggufSelect.SetSelected(ggufs[0])
+		} else {
+			state.ggufSelect.ClearSelected()
+		}
 
-	if len(mmprojs) > 0 {
-		state.mmprojSelect.SetSelected(mmprojs[0])
-	} else {
-		state.mmprojSelect.ClearSelected()
-	}
+		if len(mmprojs) > 0 {
+			state.mmprojSelect.SetSelected(mmprojs[0])
+		} else {
+			state.mmprojSelect.ClearSelected()
+		}
 
-	if len(servers) > 0 {
-		state.llamaSelect.SetSelected(servers[0])
-	} else {
-		state.llamaSelect.ClearSelected()
-	}
+		if len(servers) > 0 {
+			state.llamaSelect.SetSelected(servers[0])
+		} else {
+			state.llamaSelect.ClearSelected()
+		}
+	})
 }
 
 func (state *AppState) saveConfiguration() {
 	state.serverConfig.Host = state.hostEntry.Text
 	state.serverConfig.Port = state.portEntry.Text
-	state.serverConfig.PersonalityPrompt = state.personalityEntrySetup.Text
+	state.serverConfig.PersonalityPrompt = state.personalityEntryMain.Text
 
 	if state.serverConfig.IsLocal {
 		state.serverConfig.GgufFile = state.ggufSelect.Selected
@@ -429,15 +490,19 @@ func (state *AppState) startRecordingFlow() {
 	}
 
 	state.isRecording = true
-	state.statusLabel.SetText("🎤 Recording... Release when finished speaking.")
-	state.transcribeArea.SetText("Capturing audio frames...")
+	fyne.Do(func() {
+		state.statusLabel.SetText("🎤 Recording... Release when finished speaking.")
+		state.transcribeArea.SetText("Capturing audio frames...")
+	})
 
 	if state.recorder != nil {
-		err := state.recorder.Start()
+		err := state.recorder.Start(state.selectedDeviceID)
 		if err != nil {
 			state.isRecording = false
-			state.statusLabel.SetText("Error starting microphone.")
-			state.transcribeArea.SetText(fmt.Sprintf("Microphone error: %v", err))
+			fyne.Do(func() {
+				state.statusLabel.SetText("Error starting microphone.")
+				state.transcribeArea.SetText(fmt.Sprintf("Microphone error: %v", err))
+			})
 		}
 	}
 }
@@ -451,23 +516,31 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 	}
 
 	state.isRecording = false
-	state.statusLabel.SetText("⌛ Stopped. Processing audio & querying AI...")
+	fyne.Do(func() {
+		state.statusLabel.SetText("⌛ Stopped. Processing audio & querying AI...")
+	})
 
 	if state.recorder == nil {
-		state.statusLabel.SetText("No active microphone available.")
+		fyne.Do(func() {
+			state.statusLabel.SetText("No active microphone available.")
+		})
 		return
 	}
 
 	pcmBytes, err := state.recorder.Stop()
 	if err != nil {
-		state.statusLabel.SetText("Error capturing PCM frames.")
-		state.transcribeArea.SetText(fmt.Sprintf("Stop recording error: %v", err))
+		fyne.Do(func() {
+			state.statusLabel.SetText("Error capturing PCM frames.")
+			state.transcribeArea.SetText(fmt.Sprintf("Stop recording error: %v", err))
+		})
 		return
 	}
 
 	if len(pcmBytes) == 0 {
-		state.statusLabel.SetText("No audio captured.")
-		state.transcribeArea.SetText("The recording buffer was empty. Please check your microphone.")
+		fyne.Do(func() {
+			state.statusLabel.SetText("No audio captured.")
+			state.transcribeArea.SetText("The recording buffer was empty. Please check your microphone.")
+		})
 		return
 	}
 
@@ -475,47 +548,75 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 		tempWav := filepath.Join(os.TempDir(), "yellatmypc_query.wav")
 		err = state.recorder.SaveWav(tempWav, capturedPCM)
 		if err != nil {
-			state.statusLabel.SetText("Error saving WAV file.")
-			state.transcribeArea.SetText(fmt.Sprintf("Save WAV error: %v", err))
+			fyne.Do(func() {
+				state.statusLabel.SetText("Error saving WAV file.")
+				state.transcribeArea.SetText(fmt.Sprintf("Save WAV error: %v", err))
+			})
 			return
 		}
 
-		state.transcribeArea.SetText(fmt.Sprintf("Audio saved to %s.\nSending base64 audio query to Llama-Server...", tempWav))
+		fyne.Do(func() {
+			state.transcribeArea.SetText(fmt.Sprintf("Audio saved to %s.\nSending base64 audio query to Llama-Server...", tempWav))
+		})
 
 		// Post audio completions to llama-server
 		reply, err := state.llamaMgr.SendAudioQuery(state.serverConfig, tempWav)
 		if err != nil {
-			state.statusLabel.SetText("Error querying Llama-Server.")
-			state.transcribeArea.SetText(fmt.Sprintf("Failed to get response from %s:%s\nError: %v\n\nEnsure llama-server is started and active.", state.serverConfig.Host, state.serverConfig.Port, err))
+			fyne.Do(func() {
+				state.statusLabel.SetText("Error querying Llama-Server.")
+				state.transcribeArea.SetText(fmt.Sprintf("Failed to get response from %s:%s\nError: %v\n\nEnsure llama-server is started and active.", state.serverConfig.Host, state.serverConfig.Port, err))
+			})
 			return
 		}
 
-		state.statusLabel.SetText("💬 Response received! Speaking reply...")
-		state.replyArea.SetText(reply)
+		fyne.Do(func() {
+			state.statusLabel.SetText("💬 Response received! Processing reply...")
+			state.replyArea.SetText(reply)
+		})
 
 		// Parse XML actions
 		actions := ai.ParseActions(reply)
+		customVoiceReply := ""
+		customVoiceSummary := ""
+
 		if len(actions) > 0 {
-			state.transcribeArea.SetText(fmt.Sprintf("Actions parsed successfully: %d actions found.\nExecuting in sequence...", len(actions)))
+			fyne.Do(func() {
+				state.transcribeArea.SetText(fmt.Sprintf("Actions parsed successfully: %d actions found.\nExecuting in sequence...", len(actions)))
+			})
 
 			// Sequential execution of tool actions
 			go func() {
 				for i, act := range actions {
+					if act.Tool == "speak_reply" {
+						customVoiceReply = act.Reply
+						customVoiceSummary = act.Summary
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[speak_reply summary]: %s", state.transcribeArea.Text, act.Summary))
+						})
+						continue
+					}
+
 					// Loop prevention check
 					argsString := fmt.Sprintf("%s:%v:%v:%s", act.Text, act.X, act.Y, act.Name)
 					_, alert, breakConnection := state.loopTracker.TrackAction(act.Tool, argsString)
 
 					if alert != "" {
-						state.transcribeArea.SetText(fmt.Sprintf("%s\n%s", state.transcribeArea.Text, alert))
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\n%s", state.transcribeArea.Text, alert))
+						})
 						_ = tts.Speak(alert)
 					}
 
 					if breakConnection {
-						state.transcribeArea.SetText(fmt.Sprintf("%s\nBreaking active connection due to duplicate infinite loop safety trigger.", state.transcribeArea.Text))
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\nBreaking active connection due to duplicate infinite loop safety trigger.", state.transcribeArea.Text))
+						})
 						break
 					}
 
-					state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[Action %d/%d]: Executing tool '%s'...", state.transcribeArea.Text, i+1, len(actions), act.Tool))
+					fyne.Do(func() {
+						state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[Action %d/%d]: Executing tool '%s'...", state.transcribeArea.Text, i+1, len(actions), act.Tool))
+					})
 
 					var execErr error
 					switch act.Tool {
@@ -533,44 +634,84 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 						scrFile := filepath.Join(os.TempDir(), "yellatmypc_screenshot.png")
 						execErr = state.engine.TakeScreenshot(scrFile)
 						if execErr == nil {
-							state.transcribeArea.SetText(fmt.Sprintf("%s\nScreenshot captured successfully to %s", state.transcribeArea.Text, scrFile))
+							fyne.Do(func() {
+								state.transcribeArea.SetText(fmt.Sprintf("%s\nScreenshot captured successfully to %s", state.transcribeArea.Text, scrFile))
+							})
 						}
 					case "read_selection":
 						var text string
 						text, execErr = state.engine.ReadSelection()
 						if execErr == nil {
-							state.transcribeArea.SetText(fmt.Sprintf("%s\nCopied Selection Content: %s", state.transcribeArea.Text, text))
+							fyne.Do(func() {
+								state.transcribeArea.SetText(fmt.Sprintf("%s\nCopied Selection Content: %s", state.transcribeArea.Text, text))
+							})
 						}
 					default:
 						execErr = fmt.Errorf("unknown or unsupported action tool: %s", act.Tool)
 					}
 
 					if execErr != nil {
-						state.transcribeArea.SetText(fmt.Sprintf("%s\nExecution error on action %d: %v", state.transcribeArea.Text, i+1, execErr))
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\nExecution error on action %d: %v", state.transcribeArea.Text, i+1, execErr))
+						})
 					} else {
-						state.transcribeArea.SetText(fmt.Sprintf("%s\nAction %d executed successfully.", state.transcribeArea.Text, i+1))
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\nAction %d executed successfully.", state.transcribeArea.Text, i+1))
+						})
 					}
 
-					// Small wait between sequential actions
 					time.Sleep(200 * time.Millisecond)
 				}
+
+				// Finalize with speech output
+				var speechToPlay string
+				if customVoiceReply != "" {
+					speechToPlay = customVoiceReply
+					if customVoiceSummary != "" {
+						fyne.Do(func() {
+							state.replyArea.SetText(fmt.Sprintf("%s\n\n--- Conversation Summary ---\n%s", state.replyArea.Text, customVoiceSummary))
+						})
+					}
+				} else {
+					speechToPlay = removeXMLTags(reply)
+				}
+
+				fyne.Do(func() {
+					state.statusLabel.SetText("💬 Playing voice reply...")
+				})
+
+				err = tts.Speak(speechToPlay)
+				if err != nil {
+					fyne.Do(func() {
+						state.transcribeArea.SetText(fmt.Sprintf("%s\nTTS Warning: %v", state.transcribeArea.Text, err))
+					})
+				}
+
+				fyne.Do(func() {
+					state.statusLabel.SetText("Idle. Press and Hold to Talk.")
+				})
 			}()
 		} else {
-			state.transcribeArea.SetText("No computer tool calls parsed in response. Normal dialogue flow.")
+			fyne.Do(func() {
+				state.transcribeArea.SetText("No computer tool calls parsed in response. Normal dialogue flow.")
+			})
+			cleanSpeech := removeXMLTags(reply)
+			fyne.Do(func() {
+				state.statusLabel.SetText("💬 Playing voice reply...")
+			})
+			err = tts.Speak(cleanSpeech)
+			if err != nil {
+				fyne.Do(func() {
+					state.transcribeArea.SetText(fmt.Sprintf("%s\nTTS Warning: %v", state.transcribeArea.Text, err))
+				})
+			}
+			fyne.Do(func() {
+				state.statusLabel.SetText("Idle. Press and Hold to Talk.")
+			})
 		}
-
-		// Speak reply text out loud (ignoring the raw JSON xml tags for clean speech!)
-		cleanSpeech := removeXMLTags(reply)
-		err = tts.Speak(cleanSpeech)
-		if err != nil {
-			state.transcribeArea.SetText(fmt.Sprintf("TTS Warning: %v", err))
-		}
-
-		state.statusLabel.SetText("Idle. Press and Hold to Talk.")
 	}(pcmBytes)
 }
 
-// Clean up spoken voice output by stripping out JSON xml action strings
 func removeXMLTags(text string) string {
 	res := text
 	startTag := "<action>"
@@ -595,7 +736,6 @@ func removeXMLTags(text string) string {
 }
 
 func (state *AppState) setupGlobalHotkey() {
-	// Register global hotkey: Win + Space
 	hk := hotkey.New([]hotkey.Modifier{hotkey.Modifier(0x08)}, hotkey.KeySpace)
 	err := hk.Register()
 	if err != nil {
@@ -616,9 +756,6 @@ func (state *AppState) setupGlobalHotkey() {
 }
 
 func (state *AppState) setupEmergencyStopHotkey() {
-	// Register emergency stop hotkey: Win + Z (ModWin + KeyZ)
-	// We map modifier 0x08 (ModWin) and KeyZ is 0x005a (standard KeyZ code)
-	// Let's use hotkey.KeyZ if defined or standard uint32 virtual key. KeyZ code is 0x5a.
 	hkStop := hotkey.New([]hotkey.Modifier{hotkey.Modifier(0x08)}, hotkey.Key(0x5a))
 	err := hkStop.Register()
 	if err != nil {
@@ -641,62 +778,24 @@ func (state *AppState) setupEmergencyStopHotkey() {
 	}
 }
 
-// Custom HoldButton to support press & hold callbacks
+// Custom Green HoldButton subclassing widget.Button directly
 type holdButton struct {
-	widget.BaseWidget
-	text      string
+	widget.Button
 	onPress   func()
 	onRelease func()
 }
 
 func newHoldButton(text string, onPress, onRelease func()) *holdButton {
 	b := &holdButton{
-		text:      text,
 		onPress:   onPress,
 		onRelease: onRelease,
 	}
+	b.Text = text
+	b.Importance = widget.SuccessImportance // Makes the button Green automatically!
 	b.ExtendBaseWidget(b)
 	return b
 }
 
-func (b *holdButton) CreateRenderer() fyne.WidgetRenderer {
-	lbl := widget.NewLabel(b.text)
-	lbl.Alignment = fyne.TextAlignCenter
-	lbl.TextStyle = fyne.TextStyle{Bold: true}
-	bg := widget.NewCard("", "", lbl)
-	return &holdButtonRenderer{
-		button: b,
-		lbl:    lbl,
-		bg:     bg,
-	}
-}
-
-type holdButtonRenderer struct {
-	button *holdButton
-	lbl    *widget.Label
-	bg     *widget.Card
-}
-
-func (r *holdButtonRenderer) Layout(size fyne.Size) {
-	r.bg.Resize(size)
-}
-
-func (r *holdButtonRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(120, 50)
-}
-
-func (r *holdButtonRenderer) Refresh() {
-	r.lbl.SetText(r.button.text)
-	r.bg.Refresh()
-}
-
-func (r *holdButtonRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{r.bg}
-}
-
-func (r *holdButtonRenderer) Destroy() {}
-
-// Implement touch & mouse interfaces for multi-platform hold-to-talk button
 func (b *holdButton) Dragged(*fyne.DragEvent) {}
 func (b *holdButton) DragEnd()                {}
 

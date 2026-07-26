@@ -5,11 +5,18 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"unsafe"
 
 	"github.com/gen2brain/malgo"
 	"github.com/go-audio/audio"
 	"github.com/go-audio/wav"
 )
+
+// CaptureDevice represents an audio input device
+type CaptureDevice struct {
+	Name string
+	ID   unsafe.Pointer
+}
 
 // Recorder handles capturing audio from the default microphone and saving it to a WAV file.
 type Recorder struct {
@@ -36,8 +43,25 @@ func NewRecorder() (*Recorder, error) {
 	}, nil
 }
 
+// GetCaptureDevices queries and returns all available audio input (microphone) devices
+func (r *Recorder) GetCaptureDevices() ([]CaptureDevice, error) {
+	devices, err := r.ctx.Context.Devices(malgo.Capture)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get capture devices: %w", err)
+	}
+
+	var res []CaptureDevice
+	for i := range devices {
+		res = append(res, CaptureDevice{
+			Name: devices[i].Name(),
+			ID:   devices[i].ID.Pointer(),
+		})
+	}
+	return res, nil
+}
+
 // Start begins recording audio from the microphone.
-func (r *Recorder) Start() error {
+func (r *Recorder) Start(deviceID unsafe.Pointer) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
@@ -53,6 +77,9 @@ func (r *Recorder) Start() error {
 	deviceConfig.Capture.Channels = 1
 	deviceConfig.SampleRate = r.sampleRate
 	deviceConfig.Alsa.NoMMap = 1
+	if deviceID != nil {
+		deviceConfig.Capture.DeviceID = deviceID
+	}
 
 	sizeInBytes := uint32(malgo.SampleSizeInBytes(deviceConfig.Capture.Format))
 
