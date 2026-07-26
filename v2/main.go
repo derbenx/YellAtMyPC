@@ -142,7 +142,7 @@ func main() {
 	}
 
 	// Build Tab 1: Main Push To Talk / Chat Automation Tab
-	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Ctrl+Shift+Space to Talk.")
+	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Right Ctrl+Right Alt to Talk.")
 	state.statusLabel.Alignment = fyne.TextAlignCenter
 	state.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -736,8 +736,30 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 						break
 					}
 
+					var detail string
+					switch act.Tool {
+					case "type_text":
+						detail = fmt.Sprintf("typing text: %q", act.Text)
+					case "press_key":
+						detail = fmt.Sprintf("pressing key %q with modifiers %v", act.Key, act.Modifiers)
+					case "click_mouse":
+						detail = fmt.Sprintf("clicking %s mouse button (double-click: %v)", act.Button, act.Double)
+					case "move_mouse":
+						detail = fmt.Sprintf("moving mouse to coordinates X: %d, Y: %d", act.X, act.Y)
+					case "drag_mouse":
+						detail = fmt.Sprintf("dragging mouse to coordinates X: %d, Y: %d", act.X, act.Y)
+					case "run_app":
+						detail = fmt.Sprintf("launching application alias %q", act.Name)
+					case "take_screenshot":
+						detail = "taking desktop screenshot"
+					case "read_selection":
+						detail = "reading current text selection"
+					default:
+						detail = fmt.Sprintf("unknown parameters for tool %q", act.Tool)
+					}
+
 					fyne.Do(func() {
-						state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[Action %d/%d]: Executing tool '%s'...", state.transcribeArea.Text, i+1, len(actions), act.Tool))
+						state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[Action %d/%d]: Executing tool '%s' (%s)...", state.transcribeArea.Text, i+1, len(actions), act.Tool, detail))
 					})
 
 					var execErr error
@@ -780,11 +802,11 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 
 					if execErr != nil {
 						fyne.Do(func() {
-							state.transcribeArea.SetText(fmt.Sprintf("%s\nExecution error on action %d: %v", state.transcribeArea.Text, i+1, execErr))
+							state.transcribeArea.SetText(fmt.Sprintf("%s\nExecution error on action %d (%s): %v", state.transcribeArea.Text, i+1, act.Tool, execErr))
 						})
 					} else {
 						fyne.Do(func() {
-							state.transcribeArea.SetText(fmt.Sprintf("%s\nAction %d executed successfully.", state.transcribeArea.Text, i+1))
+							state.transcribeArea.SetText(fmt.Sprintf("%s\nAction %d (%s) executed successfully.", state.transcribeArea.Text, i+1, act.Tool))
 						})
 					}
 
@@ -873,15 +895,15 @@ func removeXMLTags(text string) string {
 }
 
 func (state *AppState) setupGlobalHotkey() {
-	// Register global hotkey: Ctrl + Shift + Space (Super safe keyboard combination!)
-	hk := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl, hotkey.ModShift}, hotkey.KeySpace)
+	// Register global hotkey: Right Ctrl + Right Alt
+	hk := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl}, hotkey.Key(0xA5))
 	err := hk.Register()
 	if err != nil {
-		log.Printf("Global Hotkey Ctrl+Shift+Space failed to register: %v. Standard PPT button is still fully active.", err)
+		log.Printf("Global Hotkey Right Ctrl+Right Alt failed to register: %v. Standard PPT button is still fully active.", err)
 		return
 	}
 
-	log.Println("Global PPT Hotkey registered: Ctrl + Shift + Space")
+	log.Println("Global PPT Hotkey registered: Right Ctrl + Right Alt")
 
 	for {
 		select {

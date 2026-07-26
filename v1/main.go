@@ -123,7 +123,7 @@ func main() {
 	}
 
 	// Build Tab 1: Main Push To Talk Tab (with standard, non-deprecated widget.NewLabel)
-	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Ctrl+Shift+Space to Talk.")
+	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Right Ctrl+Right Alt to Talk.")
 	state.statusLabel.Alignment = fyne.TextAlignCenter
 	state.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -656,15 +656,15 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 }
 
 func (state *AppState) setupGlobalHotkey() {
-	// Register global hotkey: Ctrl + Shift + Space (Super safe keyboard combination!)
-	hk := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl, hotkey.ModShift}, hotkey.KeySpace)
+	// Register global hotkey: Right Ctrl + Right Alt
+	hk := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl}, hotkey.Key(0xA5))
 	err := hk.Register()
 	if err != nil {
-		log.Printf("Global Hotkey Ctrl+Shift+Space failed to register: %v. Standard PPT button is still fully active.", err)
+		log.Printf("Global Hotkey Right Ctrl+Right Alt failed to register: %v. Standard PPT button is still fully active.", err)
 		return
 	}
 
-	log.Println("Global PPT Hotkey registered: Ctrl + Shift + Space")
+	log.Println("Global PPT Hotkey registered: Right Ctrl + Right Alt")
 
 	for {
 		select {
