@@ -15,43 +15,50 @@ Paste YellAtMyPC in the main folder with the llama and ai.
 ->YellAtMyPC
 --> ai
 --> llama
+--> v1 (Simple Chatting back and forth)
+--> v2 (Computer Agent Control with allowed lists, loop tracking, safety gates)
 --> YellAtMyPC.exe
 
 V1 is just chatting back and forth.
-V2 will let you ask the AI to do things; open programs, click on things. type, write a program..
+V2 lets you ask the AI to do things: control mouse, click, type, copy selections, and launch permitted apps!
 
 ========================
 How to Build and Compile
 ========================
-To build the application, make sure you have Go installed on your machine.
-Since Fyne requires graphics hardware integration, CGo must be enabled and you must have a C compiler installed.
+To build the application, Fyne requires graphics hardware integration. CGo must be enabled, and you must use your portable MinGW GCC toolchain.
 
-On Windows:
-  1. Install MSYS2 (https://www.msys2.org/).
-  2. Install Mingw-w64 GCC by running the following in the MSYS2 terminal:
-       pacman -S mingw-w64-x86_64-toolchain
-  3. Ensure the bin directory of your Mingw-w64 installation (e.g. C:\msys64\mingw64\bin) is added to your Windows system PATH.
-  4. Ensure CGO_ENABLED is enabled. In your Command Prompt or PowerShell, run:
-       set CGO_ENABLED=1
-       go build -o YellAtMyPC.exe
+To build V1 (Simple Voice Chat):
+  1. Open your terminal using your portable Go `.bat` script to load your environment variables.
+  2. Run:
+       go build -o YellAtMyPC_V1.exe ./v1
 
-On Linux:
+To build V2 (Local AI Computer Agent):
+  1. Open your terminal using your portable Go `.bat` script.
+  2. Run:
+       go build -o YellAtMyPC_V2.exe ./v2
+
+On Linux (V1 / V2):
   1. Install development packages:
        sudo apt-get install -y libgl1-mesa-dev xorg-dev libegl1-mesa-dev libwayland-dev libxkbcommon-dev
   2. Run:
-       CGO_ENABLED=1 go build
+       CGO_ENABLED=1 go build -o yell_v2 ./v2
 
-========================
-How to Run & Configure
-========================
-1. Open YellAtMyPC.
+==============================
+How to Run & Configure (V2)
+==============================
+1. Open YellAtMyPC_V2.exe.
 2. In the "Setup / Config" tab:
-   - Select either "Local Server (Self-Hosted)" or "Network / Remote Server".
-   - Under "Local Llama discovery", click "Scan relative directories" to auto-populate files in "./llama" and "./ai".
+   - Select either "Local Server" or "Network / Remote Server".
+   - Click "Scan relative directories" to auto-populate files.
    - Select your GGUF model, multimodal mproj file, and Llama server executable.
-   - Set the port (default: 8080) and click "Launch Local Llama" to start llama-server in the background.
-3. In the "Voice Chat" tab:
-   - Select or edit the "AI Personality Prompt" directly.
-   - Click and hold the large "Push & Hold to Talk" button to speak, then release to send.
-   - Alternatively, use the global hotkey: hold "Win+Space" to record anywhere, and release to submit query!
-   - Your audio query is sent to llama-server, processed, and the response is spoken out loud.
+   - Click "Launch Local Llama" to start llama-server.
+3. In the "Safety Checklist" tab:
+   - Restrict AI permissions (Mouse, Keyboard, Screenshot, Launch Apps) anytime using simple checkboxes.
+   - Emergency Stop is bound globally to "Win+Z" - pressing it instantly kills the app and terminates llama-server!
+4. In the "Allowed Apps" tab:
+   - Define custom app mappings (e.g., alias "notepad" -> "notepad.exe") that the AI is permitted to run.
+5. In the "Voice Chat" tab:
+   - Change the system prompt or personality on the fly.
+   - Hold the on-screen "Push & Hold to Talk" button or press global "Win+Space" to speak your query.
+   - Gemma-4 will respond spokenly and automatically execute specified mouse, keyboard, or system actions!
+   - Anti-loop tracking is built-in (warns at 3x repetitions, stop alert at 4x, connection break at 5x).

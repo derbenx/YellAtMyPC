@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"YellAtMyPC/ai"
-	"YellAtMyPC/audio"
-	"YellAtMyPC/tts"
+	"YellAtMyPC/v1/ai"
+	"YellAtMyPC/v1/audio"
+	"YellAtMyPC/v1/tts"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -133,22 +133,41 @@ func main() {
 	state.localRadio = widget.NewRadioGroup([]string{"Local Server (Self-Hosted)", "Network / Remote Server"}, func(selected string) {
 		if selected == "Local Server (Self-Hosted)" {
 			state.serverConfig.IsLocal = true
-			state.hostEntry.SetText("127.0.0.1")
-			state.hostEntry.Disable()
-			state.ggufSelect.Enable()
-			state.mmprojSelect.Enable()
-			state.llamaSelect.Enable()
-			state.launchBtn.Enable()
+			if state.hostEntry != nil {
+				state.hostEntry.SetText("127.0.0.1")
+				state.hostEntry.Disable()
+			}
+			if state.ggufSelect != nil {
+				state.ggufSelect.Enable()
+			}
+			if state.mmprojSelect != nil {
+				state.mmprojSelect.Enable()
+			}
+			if state.llamaSelect != nil {
+				state.llamaSelect.Enable()
+			}
+			if state.launchBtn != nil {
+				state.launchBtn.Enable()
+			}
 		} else {
 			state.serverConfig.IsLocal = false
-			state.hostEntry.Enable()
-			state.ggufSelect.Disable()
-			state.mmprojSelect.Disable()
-			state.llamaSelect.Disable()
-			state.launchBtn.Disable()
+			if state.hostEntry != nil {
+				state.hostEntry.Enable()
+			}
+			if state.ggufSelect != nil {
+				state.ggufSelect.Disable()
+			}
+			if state.mmprojSelect != nil {
+				state.mmprojSelect.Disable()
+			}
+			if state.llamaSelect != nil {
+				state.llamaSelect.Disable()
+			}
+			if state.launchBtn != nil {
+				state.launchBtn.Disable()
+			}
 		}
 	})
-	state.localRadio.SetSelected("Local Server (Self-Hosted)")
 
 	state.hostEntry = widget.NewEntry()
 	state.hostEntry.SetText("127.0.0.1")
@@ -164,6 +183,8 @@ func main() {
 	state.launchBtn = widget.NewButtonWithIcon("Launch Local Llama", theme.MediaPlayIcon(), func() {
 		state.launchLocalServer()
 	})
+
+	state.localRadio.SetSelected("Local Server (Self-Hosted)")
 
 	state.saveBtn = widget.NewButtonWithIcon("Save Configuration", theme.DocumentSaveIcon(), func() {
 		state.saveConfiguration()
