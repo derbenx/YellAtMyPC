@@ -144,16 +144,7 @@ func main() {
 	state.personalityEntryMain.Wrapping = fyne.TextWrapWord // Word wrap enabled!
 	state.personalityEntryMain.OnChanged = func(text string) {
 		state.serverConfig.PersonalityPrompt = text
-
-		// Auto-save debounced 1 minute after last change
-		state.recordingMutex.Lock()
-		if state.saveTimer != nil {
-			state.saveTimer.Stop()
-		}
-		state.saveTimer = time.AfterFunc(1*time.Minute, func() {
-			state.saveConfigurationSilent()
-		})
-		state.recordingMutex.Unlock()
+		state.debouncedSave()
 	}
 
 	// Build Tab 1: Main Push To Talk / Chat Automation Tab
@@ -347,14 +338,21 @@ func main() {
 				state.launchBtn.Disable()
 			}
 		}
+		state.saveConfigurationSilent()
 	})
 
 	state.hostEntry = widget.NewEntry()
 	state.hostEntry.SetText("127.0.0.1")
 	state.hostEntry.Disable()
+	state.hostEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.portEntry = widget.NewEntry()
 	state.portEntry.SetText("8080")
+	state.portEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	// Microphone select dropdown on setup
 	state.micSelect = widget.NewSelect(nil, func(selected string) {
@@ -365,21 +363,24 @@ func main() {
 				break
 			}
 		}
+		state.saveConfigurationSilent()
 	})
 
-	state.ggufSelect = widget.NewSelect(nil, nil)
-	state.mmprojSelect = widget.NewSelect(nil, nil)
-	state.llamaSelect = widget.NewSelect(nil, nil)
+	state.ggufSelect = widget.NewSelect(nil, func(s string) {
+		state.saveConfigurationSilent()
+	})
+	state.mmprojSelect = widget.NewSelect(nil, func(s string) {
+		state.saveConfigurationSilent()
+	})
+	state.llamaSelect = widget.NewSelect(nil, func(s string) {
+		state.saveConfigurationSilent()
+	})
 
 	state.launchBtn = widget.NewButtonWithIcon("Launch Local Llama", theme.MediaPlayIcon(), func() {
 		state.launchLocalServer()
 	})
 
 	state.localRadio.SetSelected("Local Server (Self-Hosted)")
-
-	state.saveBtn = widget.NewButtonWithIcon("Save Configuration", theme.DocumentSaveIcon(), func() {
-		state.saveConfiguration()
-	})
 
 	refreshBtn := widget.NewButtonWithIcon("Scan relative directories", theme.ViewRefreshIcon(), func() {
 		state.scanFiles()
@@ -389,17 +390,29 @@ func main() {
 	state.pttKeyEntry = widget.NewEntry()
 	state.pttKeyEntry.SetPlaceHolder("PTT Key Code (e.g. 0x13)")
 	state.pttKeyEntry.SetText("0x13")
+	state.pttKeyEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.pttModsEntry = widget.NewEntry()
 	state.pttModsEntry.SetPlaceHolder("PTT Modifiers (e.g. none)")
+	state.pttModsEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.killKeyEntry = widget.NewEntry()
 	state.killKeyEntry.SetPlaceHolder("Kill Key Code (e.g. 0x5a)")
 	state.killKeyEntry.SetText("0x5a")
+	state.killKeyEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.killModsEntry = widget.NewEntry()
 	state.killModsEntry.SetPlaceHolder("Kill Modifiers (e.g. win,alt)")
 	state.killModsEntry.SetText("win,alt")
+	state.killModsEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	hotkeyCard := widget.NewCard("Hotkey Settings", "Configure custom global keyboard hotkeys",
 		container.NewVBox(
@@ -420,8 +433,6 @@ func main() {
 			container.NewVBox(widget.NewLabel("Host IP:"), state.hostEntry),
 			container.NewVBox(widget.NewLabel("Port:"), state.portEntry),
 		),
-		widget.NewLabel("Select Microphone:"),
-		state.micSelect,
 		widget.NewCard("Local Llama discovery (relative paths)", "",
 			container.NewVBox(
 				state.serverStatus,
@@ -440,13 +451,20 @@ func main() {
 				),
 			),
 		),
+	))
+
+	hotkeyAndMicTabContent := container.NewVScroll(container.NewVBox(
+		widget.NewCard("Active Recording Microphone", "", container.NewVBox(
+			widget.NewLabel("Select input microphone device:"),
+			state.micSelect,
+		)),
 		hotkeyCard,
-		container.NewHBox(layout.NewSpacer(), state.saveBtn),
 	))
 
 	tabs := container.NewAppTabs(
 		container.NewTabItemWithIcon("Voice Chat", theme.HomeIcon(), mainTabContent),
 		container.NewTabItemWithIcon("Safety Checklist", theme.ConfirmIcon(), safetyTabContent),
+		container.NewTabItemWithIcon("Hotkey & Mic", theme.VolumeUpIcon(), hotkeyAndMicTabContent),
 		container.NewTabItemWithIcon("Allowed Apps", theme.FileApplicationIcon(), allowlistTabContent),
 		container.NewTabItemWithIcon("Setup / Config", theme.SettingsIcon(), configTabContent),
 	)
@@ -604,9 +622,15 @@ func (state *AppState) saveConfigurationSilent() {
 	go state.setupEmergencyStopHotkey()
 }
 
-func (state *AppState) saveConfiguration() {
-	state.saveConfigurationSilent()
-	dialog.ShowInformation("Configuration Saved", "Setup configurations saved successfully to settings.json.", state.win)
+func (state *AppState) debouncedSave() {
+	state.recordingMutex.Lock()
+	if state.saveTimer != nil {
+		state.saveTimer.Stop()
+	}
+	state.saveTimer = time.AfterFunc(1*time.Second, func() {
+		state.saveConfigurationSilent()
+	})
+	state.recordingMutex.Unlock()
 }
 
 func (state *AppState) refreshMicrophonesSync() {
@@ -693,7 +717,7 @@ func (state *AppState) scanFiles() {
 }
 
 func (state *AppState) launchLocalServer() {
-	state.saveConfiguration()
+	state.saveConfigurationSilent()
 
 	if state.llamaSelect.Selected == "" {
 		dialog.ShowError(fmt.Errorf("please select a llama-server executable first"), state.win)

@@ -23,7 +23,6 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/driver/mobile"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -131,16 +130,7 @@ func main() {
 	state.personalityEntryMain.Wrapping = fyne.TextWrapWord // Word wrap enabled!
 	state.personalityEntryMain.OnChanged = func(text string) {
 		state.serverConfig.PersonalityPrompt = text
-
-		// Auto-save debounced 1 minute after last change
-		state.recordingMutex.Lock()
-		if state.saveTimer != nil {
-			state.saveTimer.Stop()
-		}
-		state.saveTimer = time.AfterFunc(1*time.Minute, func() {
-			state.saveConfigurationSilent()
-		})
-		state.recordingMutex.Unlock()
+		state.debouncedSave()
 	}
 
 	// Build Tab 1: Main Push To Talk Tab (with standard, non-deprecated widget.NewLabel)
@@ -188,7 +178,7 @@ func main() {
 		state.statusLabel, // Idle Status right above the green PTT button
 		holdButton,
 		widget.NewLabel("System Status Log:"),
-		container.NewGridWrap(fyne.NewSize(320, 110), state.transcribeArea), // ~4 lines tall
+		container.NewGridWrap(fyne.NewSize(330, 110), state.transcribeArea), // ~4 lines tall
 	)
 
 	// Right column:
@@ -197,10 +187,10 @@ func main() {
 	//   - Spoken AI Reply (below)
 	rightSide := container.NewVBox(
 		widget.NewLabel("AI Memory & Conversation Summary:"),
-		container.NewGridWrap(fyne.NewSize(320, 140), state.summaryArea),
+		container.NewGridWrap(fyne.NewSize(330, 140), state.summaryArea),
 		clearHistoryBtn, // Placed beautifully directly under the summary box!
 		widget.NewLabel("AI Spoken Reply Text:"),
-		container.NewGridWrap(fyne.NewSize(320, 140), state.replyArea),
+		container.NewGridWrap(fyne.NewSize(330, 140), state.replyArea),
 	)
 
 	mainTabContent := container.NewBorder(
@@ -248,14 +238,21 @@ func main() {
 				state.launchBtn.Disable()
 			}
 		}
+		state.saveConfigurationSilent()
 	})
 
 	state.hostEntry = widget.NewEntry()
 	state.hostEntry.SetText("127.0.0.1")
 	state.hostEntry.Disable()
+	state.hostEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.portEntry = widget.NewEntry()
 	state.portEntry.SetText("8080")
+	state.portEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	// Microphone selection dropdown on the setup tab
 	state.micSelect = widget.NewSelect(nil, func(selected string) {
@@ -266,21 +263,24 @@ func main() {
 				break
 			}
 		}
+		state.saveConfigurationSilent()
 	})
 
-	state.ggufSelect = widget.NewSelect(nil, nil)
-	state.mmprojSelect = widget.NewSelect(nil, nil)
-	state.llamaSelect = widget.NewSelect(nil, nil)
+	state.ggufSelect = widget.NewSelect(nil, func(s string) {
+		state.saveConfigurationSilent()
+	})
+	state.mmprojSelect = widget.NewSelect(nil, func(s string) {
+		state.saveConfigurationSilent()
+	})
+	state.llamaSelect = widget.NewSelect(nil, func(s string) {
+		state.saveConfigurationSilent()
+	})
 
 	state.launchBtn = widget.NewButtonWithIcon("Launch Local Llama", theme.MediaPlayIcon(), func() {
 		state.launchLocalServer()
 	})
 
 	state.localRadio.SetSelected("Local Server (Self-Hosted)")
-
-	state.saveBtn = widget.NewButtonWithIcon("Save Configuration", theme.DocumentSaveIcon(), func() {
-		state.saveConfiguration()
-	})
 
 	refreshBtn := widget.NewButtonWithIcon("Scan relative directories", theme.ViewRefreshIcon(), func() {
 		state.scanFiles()
@@ -290,17 +290,29 @@ func main() {
 	state.pttKeyEntry = widget.NewEntry()
 	state.pttKeyEntry.SetPlaceHolder("PTT Key Code (e.g. 0x13)")
 	state.pttKeyEntry.SetText("0x13")
+	state.pttKeyEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.pttModsEntry = widget.NewEntry()
 	state.pttModsEntry.SetPlaceHolder("PTT Modifiers (e.g. none)")
+	state.pttModsEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.killKeyEntry = widget.NewEntry()
 	state.killKeyEntry.SetPlaceHolder("Kill Key Code (e.g. 0x5a)")
 	state.killKeyEntry.SetText("0x5a")
+	state.killKeyEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	state.killModsEntry = widget.NewEntry()
 	state.killModsEntry.SetPlaceHolder("Kill Modifiers (e.g. win,alt)")
 	state.killModsEntry.SetText("win,alt")
+	state.killModsEntry.OnChanged = func(s string) {
+		state.debouncedSave()
+	}
 
 	hotkeyCard := widget.NewCard("Hotkey Settings", "Configure custom global keyboard hotkeys",
 		container.NewVBox(
@@ -321,8 +333,6 @@ func main() {
 			container.NewVBox(widget.NewLabel("Host IP:"), state.hostEntry),
 			container.NewVBox(widget.NewLabel("Port:"), state.portEntry),
 		),
-		widget.NewLabel("Select Microphone:"),
-		state.micSelect,
 		widget.NewCard("Local Llama discovery (relative paths)", "",
 			container.NewVBox(
 				state.serverStatus,
@@ -341,19 +351,19 @@ func main() {
 				),
 			),
 		),
-		hotkeyCard,
-		container.NewHBox(layout.NewSpacer(), state.saveBtn),
 	))
 
 	// Build Tab 2: Safety Checklist Tab
 	state.enableCurlCheck = widget.NewCheck("Enable HTTP Curl Requests (Web searches, JSON API queries)", func(checked bool) {
 		state.enableCurl = checked
+		state.saveConfigurationSilent()
 	})
 	state.enableCurlCheck.SetChecked(true)
 	state.enableCurl = true
 
 	state.enableDatetimeCheck = widget.NewCheck("Enable Datetime Retrieval (Check current date/time)", func(checked bool) {
 		state.enableDatetime = checked
+		state.saveConfigurationSilent()
 	})
 	state.enableDatetimeCheck.SetChecked(true)
 	state.enableDatetime = true
@@ -368,9 +378,18 @@ func main() {
 		),
 	)
 
+	hotkeyAndMicTabContent := container.NewVScroll(container.NewVBox(
+		widget.NewCard("Active Recording Microphone", "", container.NewVBox(
+			widget.NewLabel("Select input microphone device:"),
+			state.micSelect,
+		)),
+		hotkeyCard,
+	))
+
 	tabs := container.NewAppTabs(
 		container.NewTabItemWithIcon("Voice Chat", theme.HomeIcon(), mainTabContent),
 		container.NewTabItemWithIcon("Safety Checklist", theme.ConfirmIcon(), safetyTabContent),
+		container.NewTabItemWithIcon("Hotkey & Mic", theme.VolumeUpIcon(), hotkeyAndMicTabContent),
 		container.NewTabItemWithIcon("Setup / Config", theme.SettingsIcon(), configTabContent),
 	)
 
@@ -522,9 +541,15 @@ func (state *AppState) saveConfigurationSilent() {
 	go state.setupGlobalHotkey()
 }
 
-func (state *AppState) saveConfiguration() {
-	state.saveConfigurationSilent()
-	dialog.ShowInformation("Configuration Saved", "Setup configurations saved successfully to settings.json.", state.win)
+func (state *AppState) debouncedSave() {
+	state.recordingMutex.Lock()
+	if state.saveTimer != nil {
+		state.saveTimer.Stop()
+	}
+	state.saveTimer = time.AfterFunc(1*time.Second, func() {
+		state.saveConfigurationSilent()
+	})
+	state.recordingMutex.Unlock()
 }
 
 func (state *AppState) refreshMicrophonesSync() {
@@ -639,7 +664,7 @@ func (state *AppState) scanFiles() {
 }
 
 func (state *AppState) launchLocalServer() {
-	state.saveConfiguration()
+	state.saveConfigurationSilent()
 
 	if state.llamaSelect.Selected == "" {
 		dialog.ShowError(fmt.Errorf("please select a llama-server executable first"), state.win)
