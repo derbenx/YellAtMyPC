@@ -486,62 +486,64 @@ func (state *AppState) loadPersistentSettings() {
 	state.serverConfig.Port = set.Port
 	state.serverConfig.PersonalityPrompt = set.PersonalityPrompt
 
-	state.hostEntry.SetText(set.Host)
-	state.portEntry.SetText(set.Port)
-	state.personalityEntryMain.SetText(set.PersonalityPrompt)
+	fyne.Do(func() {
+		state.hostEntry.SetText(set.Host)
+		state.portEntry.SetText(set.Port)
+		state.personalityEntryMain.SetText(set.PersonalityPrompt)
 
-	if set.IsLocal {
-		state.localRadio.SetSelected("Local Server (Self-Hosted)")
-		state.ggufSelect.SetSelected(set.GgufFile)
-		state.mmprojSelect.SetSelected(set.MmprojFile)
-		state.llamaSelect.SetSelected(set.LlamaFile)
-	} else {
-		state.localRadio.SetSelected("Network / Remote Server")
-	}
-
-	if set.MicrophoneName != "" {
-		state.micSelect.SetSelected(set.MicrophoneName)
-	}
-
-	// Safety Checklist toggles
-	state.mouseCheck.SetChecked(set.EnableMouse)
-	state.engine.EnableMouse = set.EnableMouse
-
-	state.keysCheck.SetChecked(set.EnableKeys)
-	state.engine.EnableKeys = set.EnableKeys
-
-	state.screenCheck.SetChecked(set.EnableScreen)
-	state.engine.EnableScreen = set.EnableScreen
-
-	state.appsCheck.SetChecked(set.EnableApps)
-	state.engine.EnableApps = set.EnableApps
-
-	state.curlCheck.SetChecked(set.EnableCurl)
-	state.engine.EnableCurl = set.EnableCurl
-
-	state.enableDatetime = true
-	if set.PTTKeyString != "" {
-		state.enableDatetime = set.EnableKeys // or standard true
-	}
-	state.datetimeCheck.SetChecked(state.enableDatetime)
-
-	// Whitelisted apps map
-	if len(set.AllowedAppsMap) > 0 {
-		for k, v := range set.AllowedAppsMap {
-			state.engine.AllowedApps.SetAllowed(k, v)
+		if set.IsLocal {
+			state.localRadio.SetSelected("Local Server (Self-Hosted)")
+			state.ggufSelect.SetSelected(set.GgufFile)
+			state.mmprojSelect.SetSelected(set.MmprojFile)
+			state.llamaSelect.SetSelected(set.LlamaFile)
+		} else {
+			state.localRadio.SetSelected("Network / Remote Server")
 		}
-		state.refreshAllowlistGUI()
-	}
 
-	// Hotkey GUI fields
-	if set.PTTKeyString != "" {
-		state.pttKeyEntry.SetText(set.PTTKeyString)
-	}
-	state.pttModsEntry.SetText(strings.Join(set.PTTModifiers, ","))
-	if set.KillKeyString != "" {
-		state.killKeyEntry.SetText(set.KillKeyString)
-	}
-	state.killModsEntry.SetText(strings.Join(set.KillModifiers, ","))
+		if set.MicrophoneName != "" {
+			state.micSelect.SetSelected(set.MicrophoneName)
+		}
+
+		// Safety Checklist toggles
+		state.mouseCheck.SetChecked(set.EnableMouse)
+		state.engine.EnableMouse = set.EnableMouse
+
+		state.keysCheck.SetChecked(set.EnableKeys)
+		state.engine.EnableKeys = set.EnableKeys
+
+		state.screenCheck.SetChecked(set.EnableScreen)
+		state.engine.EnableScreen = set.EnableScreen
+
+		state.appsCheck.SetChecked(set.EnableApps)
+		state.engine.EnableApps = set.EnableApps
+
+		state.curlCheck.SetChecked(set.EnableCurl)
+		state.engine.EnableCurl = set.EnableCurl
+
+		state.enableDatetime = true
+		if set.PTTKeyString != "" {
+			state.enableDatetime = set.EnableKeys
+		}
+		state.datetimeCheck.SetChecked(state.enableDatetime)
+
+		// Whitelisted apps map
+		if len(set.AllowedAppsMap) > 0 {
+			for k, v := range set.AllowedAppsMap {
+				state.engine.AllowedApps.SetAllowed(k, v)
+			}
+			state.refreshAllowlistGUI()
+		}
+
+		// Hotkey GUI fields
+		if set.PTTKeyString != "" {
+			state.pttKeyEntry.SetText(set.PTTKeyString)
+		}
+		state.pttModsEntry.SetText(strings.Join(set.PTTModifiers, ","))
+		if set.KillKeyString != "" {
+			state.killKeyEntry.SetText(set.KillKeyString)
+		}
+		state.killModsEntry.SetText(strings.Join(set.KillModifiers, ","))
+	})
 
 	log.Println("Successfully loaded persistent settings from settings.json")
 }
@@ -1188,7 +1190,7 @@ func parseModifiers(mods []string) []hotkey.Modifier {
 			} else if runtime.GOOS == "darwin" {
 				result = append(result, hotkey.Modifier(0x02))
 			} else {
-				result = append(result, hotkey.Mod1)
+				result = append(result, hotkey.Modifier(8))
 			}
 		case "shift":
 			if runtime.GOOS == "windows" {
@@ -1202,7 +1204,7 @@ func parseModifiers(mods []string) []hotkey.Modifier {
 			} else if runtime.GOOS == "darwin" {
 				result = append(result, hotkey.Modifier(0x08))
 			} else {
-				result = append(result, hotkey.Mod4)
+				result = append(result, hotkey.Modifier(64))
 			}
 		}
 	}
