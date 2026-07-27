@@ -3,11 +3,14 @@ package automation
 import (
 	"fmt"
 	"image/png"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-vgo/robotgo"
 	"github.com/vcaesar/screenshot"
@@ -86,6 +89,7 @@ type AutomationEngine struct {
 	EnableKeys   bool
 	EnableScreen bool
 	EnableApps   bool
+	EnableCurl   bool
 }
 
 // NewAutomationEngine creates a configured engine
@@ -96,6 +100,7 @@ func NewAutomationEngine() *AutomationEngine {
 		EnableKeys:   true,
 		EnableScreen: true,
 		EnableApps:   true,
+		EnableCurl:   true,
 	}
 }
 
@@ -274,4 +279,47 @@ func (e *AutomationEngine) ReadSelection() (string, error) {
 // GetScreenSize returns the screen width and height
 func (e *AutomationEngine) GetScreenSize() (int, int) {
 	return robotgo.GetScreenSize()
+}
+
+// CurlRequest performs an HTTP request (similar to curl)
+func (e *AutomationEngine) CurlRequest(method, url string, headers map[string]string, body string) (string, error) {
+	if !e.EnableCurl {
+		return "", fmt.Errorf("curl actions are disabled in safety checklist")
+	}
+
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = "GET"
+	}
+
+	var reqBody io.Reader
+	if body != "" {
+		reqBody = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, url, reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to create http request: %w", err)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024)) // limit response reading to 1MB
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return string(respBytes), nil
 }

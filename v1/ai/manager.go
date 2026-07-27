@@ -155,6 +155,59 @@ func (m *LlamaManager) IsRunning() bool {
 	return true
 }
 
+// Action represents an automation action parsed from LLM reply XML
+type Action struct {
+	Tool      string            `json:"tool"`
+	Text      string            `json:"text,omitempty"`
+	Key       string            `json:"key,omitempty"`
+	Modifiers []string          `json:"modifiers,omitempty"`
+	Button    string            `json:"button,omitempty"`
+	Double    bool              `json:"double,omitempty"`
+	X         int               `json:"x,omitempty"`
+	Y         int               `json:"y,omitempty"`
+	Name      string            `json:"name,omitempty"`
+	Method    string            `json:"method,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Body      string            `json:"body,omitempty"`
+	Summary   string            `json:"summary,omitempty"` // Cumulative summary of the entire conversation
+	Reply     string            `json:"reply,omitempty"`   // Spoken text to feed directly to TTS
+}
+
+// ParseActions extracts JSON tool action calls enclosed inside `<action>...</action>` tags
+func ParseActions(reply string) []Action {
+	var actions []Action
+
+	startTag := "<action>"
+	endTag := "</action>"
+
+	temp := reply
+	for {
+		startIdx := strings.Index(temp, startTag)
+		if startIdx == -1 {
+			break
+		}
+
+		temp = temp[startIdx+len(startTag):]
+		endIdx := strings.Index(temp, endTag)
+		if endIdx == -1 {
+			break
+		}
+
+		jsonStr := strings.TrimSpace(temp[:endIdx])
+		temp = temp[endIdx+len(endTag):]
+
+		var act Action
+		if err := json.Unmarshal([]byte(jsonStr), &act); err == nil {
+			actions = append(actions, act)
+		} else {
+			fmt.Printf("Debug: Action parse failed for string '%s': %v\n", jsonStr, err)
+		}
+	}
+
+	return actions
+}
+
 // OpenAI structures for multimodal chat completion payload
 type ChatMessage struct {
 	Role    string        `json:"role"`
@@ -221,15 +274,16 @@ func (m *LlamaManager) SendAudioQuery(config ServerConfig, wavPath string, lastS
 	}
 
 	instructions := `
-You are strictly a conversational, dialogue-only **voice chat assistant**.
-You DO NOT have access to any computer tools, you cannot open programs, click, type, play music, or manage files.
-Do not pretend to be able to execute actions on the PC. Respond only with standard, concise voice dialog.
+You are a highly capable conversational voice assistant. You have access to two specific tools to enhance your replies:
+1. Perform a curl HTTP request (GET, POST, etc.) with custom headers and body (useful to do web searches, fetch APIs, etc.):
+   <action>{"tool": "curl_request", "method": "GET", "url": "https://api.github.com/repos/fyne-io/fyne", "headers": {"User-Agent": "YellAtMyPC-Agent"}}</action>
+2. Retrieve the current local date and time:
+   <action>{"tool": "datetime"}</action>
 
-For every turn, you must respond inside a structured format utilizing two XML blocks:
-1. <summary>An updated cumulative summary of the entire conversation history so far, incorporating all previous summaries and the current turn.</summary>
-2. <reply>The exact spoken dialogue response to the user's latest query. Make sure this reply contains purely plain dialogue text, with absolutely no XML tags inside the reply block itself.</reply>
+Always finalize your response by appending the 'speak_reply' tool call:
+   <action>{"tool": "speak_reply", "summary": "An updated cumulative summary of the entire conversation history, incorporating all previous summaries and the current spoken turn.", "reply": "The exact voice text that you want played out loud to the user via TTS. Ensure this reply is purely plain dialogue text, with absolutely no actions or JSON tags inside the reply field itself."}</action>
 
-Keep both sections clean and structured.
+If you do not need to call any of these tools, you can still optionally output standard <summary>...</summary> and <reply>...</reply> tags, or just use the 'speak_reply' action block. Always keep responses concise and structured.
 `
 
 	finalPrompt := fmt.Sprintf("%s\n\n%s", systemPrompt, instructions)

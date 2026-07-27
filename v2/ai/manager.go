@@ -157,17 +157,21 @@ func (m *LlamaManager) IsRunning() bool {
 
 // Action represents an automation action parsed from LLM reply XML
 type Action struct {
-	Tool      string   `json:"tool"`
-	Text      string   `json:"text,omitempty"`
-	Key       string   `json:"key,omitempty"`
-	Modifiers []string `json:"modifiers,omitempty"`
-	Button    string   `json:"button,omitempty"`
-	Double    bool     `json:"double,omitempty"`
-	X         int      `json:"x,omitempty"`
-	Y         int      `json:"y,omitempty"`
-	Name      string   `json:"name,omitempty"`
-	Summary   string   `json:"summary,omitempty"` // Cumulative summary of the entire conversation
-	Reply     string   `json:"reply,omitempty"`   // Spoken text to feed directly to TTS
+	Tool      string            `json:"tool"`
+	Text      string            `json:"text,omitempty"`
+	Key       string            `json:"key,omitempty"`
+	Modifiers []string          `json:"modifiers,omitempty"`
+	Button    string            `json:"button,omitempty"`
+	Double    bool              `json:"double,omitempty"`
+	X         int               `json:"x,omitempty"`
+	Y         int               `json:"y,omitempty"`
+	Name      string            `json:"name,omitempty"`
+	Method    string            `json:"method,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Body      string            `json:"body,omitempty"`
+	Summary   string            `json:"summary,omitempty"` // Cumulative summary of the entire conversation
+	Reply     string            `json:"reply,omitempty"`   // Spoken text to feed directly to TTS
 }
 
 // ParseActions extracts JSON tool action calls enclosed inside `<action>...</action>` tags
@@ -273,7 +277,12 @@ Supported Tools:
    <action>{"tool": "take_screenshot"}</action>
 8. Read copied text selection:
    <action>{"tool": "read_selection"}</action>
-9. Finalize spoken reply & summarize conversation status:
+9. Perform a curl HTTP request (GET, POST, etc.) with custom headers and body (useful to do web searches, fetch APIs, etc.):
+   <action>{"tool": "curl_request", "method": "GET", "url": "https://api.github.com/repos/fyne-io/fyne", "headers": {"User-Agent": "YellAtMyPC-Agent"}}</action>
+   <action>{"tool": "curl_request", "method": "POST", "url": "https://httpbin.org/post", "headers": {"Content-Type": "application/json"}, "body": "{\"status\":\"active\"}"}</action>
+10. Retrieve the current local date and time:
+   <action>{"tool": "datetime"}</action>
+11. Finalize spoken reply & summarize conversation status:
    <action>{"tool": "speak_reply", "summary": "An updated cumulative summary of the entire conversation history, incorporating all previous summaries and the current spoken turn.", "reply": "The exact voice text that you want played out loud to the user via TTS. Ensure this reply is purely plain dialogue text, with absolutely no actions or JSON tags inside the reply field itself."}</action>
 
 Always finalize your response by appending the 'speak_reply' tool call. Ensure the XML block has exact tag syntax.

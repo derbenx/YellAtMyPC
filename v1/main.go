@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -79,6 +83,23 @@ type AppState struct {
 	llamaSelect  *widget.Select
 	launchBtn    *widget.Button
 	saveBtn      *widget.Button
+
+	// Hotkeys
+	pttHotkey    *hotkey.Hotkey
+	killHotkey   *hotkey.Hotkey
+	hotkeyMutex  sync.Mutex
+
+	// Hotkey GUI fields
+	pttKeyEntry  *widget.Entry
+	pttModsEntry *widget.Entry
+	killKeyEntry *widget.Entry
+	killModsEntry *widget.Entry
+
+	// Safety Toggles
+	enableCurlCheck     *widget.Check
+	enableDatetimeCheck *widget.Check
+	enableCurl          bool
+	enableDatetime      bool
 }
 
 func main() {
@@ -123,7 +144,7 @@ func main() {
 	}
 
 	// Build Tab 1: Main Push To Talk Tab (with standard, non-deprecated widget.NewLabel)
-	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Right Ctrl+Right Alt to Talk.")
+	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Pause/Break to Talk.")
 	state.statusLabel.Alignment = fyne.TextAlignCenter
 	state.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -266,6 +287,34 @@ func main() {
 		state.refreshMicrophones()
 	})
 
+	state.pttKeyEntry = widget.NewEntry()
+	state.pttKeyEntry.SetPlaceHolder("PTT Key Code (e.g. 0x13)")
+	state.pttKeyEntry.SetText("0x13")
+
+	state.pttModsEntry = widget.NewEntry()
+	state.pttModsEntry.SetPlaceHolder("PTT Modifiers (e.g. none)")
+
+	state.killKeyEntry = widget.NewEntry()
+	state.killKeyEntry.SetPlaceHolder("Kill Key Code (e.g. 0x5a)")
+	state.killKeyEntry.SetText("0x5a")
+
+	state.killModsEntry = widget.NewEntry()
+	state.killModsEntry.SetPlaceHolder("Kill Modifiers (e.g. win,alt)")
+	state.killModsEntry.SetText("win,alt")
+
+	hotkeyCard := widget.NewCard("Hotkey Settings", "Configure custom global keyboard hotkeys",
+		container.NewVBox(
+			container.NewGridWithColumns(2,
+				container.NewVBox(widget.NewLabel("PTT Key Code (Hex/Dec):"), state.pttKeyEntry),
+				container.NewVBox(widget.NewLabel("PTT Modifiers (comma list):"), state.pttModsEntry),
+			),
+			container.NewGridWithColumns(2,
+				container.NewVBox(widget.NewLabel("Kill Switch Key Code (Hex/Dec):"), state.killKeyEntry),
+				container.NewVBox(widget.NewLabel("Kill Switch Modifiers (comma list):"), state.killModsEntry),
+			),
+		),
+	)
+
 	configTabContent := container.NewVScroll(container.NewVBox(
 		widget.NewCard("Connection Type", "", state.localRadio),
 		container.NewGridWithColumns(2,
@@ -292,11 +341,36 @@ func main() {
 				),
 			),
 		),
+		hotkeyCard,
 		container.NewHBox(layout.NewSpacer(), state.saveBtn),
 	))
 
+	// Build Tab 2: Safety Checklist Tab
+	state.enableCurlCheck = widget.NewCheck("Enable HTTP Curl Requests (Web searches, JSON API queries)", func(checked bool) {
+		state.enableCurl = checked
+	})
+	state.enableCurlCheck.SetChecked(true)
+	state.enableCurl = true
+
+	state.enableDatetimeCheck = widget.NewCheck("Enable Datetime Retrieval (Check current date/time)", func(checked bool) {
+		state.enableDatetime = checked
+	})
+	state.enableDatetimeCheck.SetChecked(true)
+	state.enableDatetime = true
+
+	safetyTabContent := container.NewVBox(
+		widget.NewCard("Safety Gate & Checklist", "Restrict what the AI assistant can execute autonomously",
+			container.NewVBox(
+				widget.NewLabelWithStyle("Enable or disable specific tools globally:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				state.enableCurlCheck,
+				state.enableDatetimeCheck,
+			),
+		),
+	)
+
 	tabs := container.NewAppTabs(
 		container.NewTabItemWithIcon("Voice Chat", theme.HomeIcon(), mainTabContent),
+		container.NewTabItemWithIcon("Safety Checklist", theme.ConfirmIcon(), safetyTabContent),
 		container.NewTabItemWithIcon("Setup / Config", theme.SettingsIcon(), configTabContent),
 	)
 
@@ -350,6 +424,28 @@ func (state *AppState) loadPersistentSettings() {
 	if set.MicrophoneName != "" {
 		state.micSelect.SetSelected(set.MicrophoneName)
 	}
+
+	// Safety Checklist toggles
+	state.enableCurl = set.EnableCurl
+	state.enableCurlCheck.SetChecked(set.EnableCurl)
+	state.enableDatetime = set.EnableScreen // reuse enable_screen or similar fallback if unset, otherwise enable_curl
+	// Wait, we have explicit field EnableScreen, but let's use EnableScreen as fallback if enable_datetime is not saved
+	state.enableDatetime = true
+	if set.PTTKeyString != "" {
+		state.enableDatetime = set.EnableKeys // or standard true
+	}
+	state.enableDatetimeCheck.SetChecked(state.enableDatetime)
+
+	// Hotkey GUI fields
+	if set.PTTKeyString != "" {
+		state.pttKeyEntry.SetText(set.PTTKeyString)
+	}
+	state.pttModsEntry.SetText(strings.Join(set.PTTModifiers, ","))
+	if set.KillKeyString != "" {
+		state.killKeyEntry.SetText(set.KillKeyString)
+	}
+	state.killModsEntry.SetText(strings.Join(set.KillModifiers, ","))
+
 	log.Println("Successfully loaded persistent settings from settings.json")
 }
 
@@ -363,6 +459,41 @@ func (state *AppState) saveConfigurationSilent() {
 		state.serverConfig.MmprojFile = state.mmprojSelect.Selected
 	}
 
+	pttMods := strings.Split(state.pttModsEntry.Text, ",")
+	var cleanedPttMods []string
+	for _, m := range pttMods {
+		m = strings.TrimSpace(m)
+		if m != "" && m != "none" {
+			cleanedPttMods = append(cleanedPttMods, m)
+		}
+	}
+
+	killMods := strings.Split(state.killModsEntry.Text, ",")
+	var cleanedKillMods []string
+	for _, m := range killMods {
+		m = strings.TrimSpace(m)
+		if m != "" && m != "none" {
+			cleanedKillMods = append(cleanedKillMods, m)
+		}
+	}
+
+	// Keep existing V2 fields from being overwritten if they exist in file
+	var existingMap map[string]string
+	var existingEnableMouse, existingEnableKeys, existingEnableScreen, existingEnableApps bool
+	existingEnableMouse = true
+	existingEnableKeys = true
+	existingEnableScreen = true
+	existingEnableApps = true
+
+	set, err := ai.LoadSettings()
+	if err == nil {
+		existingMap = set.AllowedAppsMap
+		existingEnableMouse = set.EnableMouse
+		existingEnableKeys = set.EnableKeys
+		existingEnableScreen = set.EnableScreen
+		existingEnableApps = set.EnableApps
+	}
+
 	settings := &ai.AppSettings{
 		IsLocal:           state.serverConfig.IsLocal,
 		Host:              state.hostEntry.Text,
@@ -372,9 +503,22 @@ func (state *AppState) saveConfigurationSilent() {
 		LlamaFile:         state.llamaSelect.Selected,
 		PersonalityPrompt: state.personalityEntryMain.Text,
 		MicrophoneName:    state.micSelect.Selected,
+		EnableMouse:       existingEnableMouse,
+		EnableKeys:        existingEnableKeys,
+		EnableScreen:      existingEnableScreen,
+		EnableApps:        existingEnableApps,
+		EnableCurl:        state.enableCurl,
+		AllowedAppsMap:    existingMap,
+		PTTKeyString:      strings.TrimSpace(state.pttKeyEntry.Text),
+		PTTModifiers:      cleanedPttMods,
+		KillKeyString:     strings.TrimSpace(state.killKeyEntry.Text),
+		KillModifiers:     cleanedKillMods,
 	}
 
 	_ = ai.SaveSettings(settings)
+
+	// Re-register hotkeys dynamically on save!
+	go state.setupGlobalHotkey()
 }
 
 func (state *AppState) saveConfiguration() {
@@ -621,57 +765,319 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 			return
 		}
 
-		// Parse XML custom summary and reply tags for dialogue memory context
-		parsedSummary := ai.ParseXMLTag(reply, "summary")
-		parsedReply := ai.ParseXMLTag(reply, "reply")
+		actions := ai.ParseActions(reply)
+		customVoiceReply := ""
+		customVoiceSummary := ""
 
-		var speechToPlay string
-		if parsedSummary != "" && parsedReply != "" {
-			state.lastSummary = parsedSummary
-			speechToPlay = parsedReply
-		} else {
-			state.lastSummary = fmt.Sprintf("%s\nAI: %s", state.lastSummary, reply)
-			speechToPlay = reply
-		}
-
-		fyne.Do(func() {
-			state.statusLabel.SetText("💬 Response received! Playing voice...")
-			state.replyArea.SetText(speechToPlay)
-			state.summaryArea.SetText(state.lastSummary)
-			state.transcribeArea.SetText(fmt.Sprintf("Success! Reply fetched from llama-server.\nPassing to system TTS engine..."))
-		})
-
-		// Speak response out loud
-		err = tts.Speak(speechToPlay)
-		if err != nil {
+		if len(actions) > 0 {
 			fyne.Do(func() {
-				state.transcribeArea.SetText(fmt.Sprintf("%s\nTTS Warning: %v", state.transcribeArea.Text, err))
+				state.transcribeArea.SetText(fmt.Sprintf("Actions parsed successfully: %d actions found.\nExecuting in sequence...", len(actions)))
+			})
+
+			go func() {
+				for i, act := range actions {
+					if act.Tool == "speak_reply" {
+						customVoiceReply = act.Reply
+						customVoiceSummary = act.Summary
+						state.lastSummary = act.Summary
+
+						fyne.Do(func() {
+							state.summaryArea.SetText(act.Summary)
+							state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[speak_reply summary]: %s", state.transcribeArea.Text, act.Summary))
+						})
+						continue
+					}
+
+					var detail string
+					var toolResult string
+					var execErr error
+
+					switch act.Tool {
+					case "curl_request":
+						detail = fmt.Sprintf("HTTP request to %s", act.URL)
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[Action %d/%d]: Executing tool 'curl_request' (%s)...", state.transcribeArea.Text, i+1, len(actions), detail))
+						})
+						toolResult, execErr = performCurlRequest(state.enableCurl, act.Method, act.URL, act.Headers, act.Body)
+						if execErr == nil {
+							fyne.Do(func() {
+								truncated := toolResult
+								if len(truncated) > 500 {
+									truncated = truncated[:500] + "\n...[truncated]..."
+								}
+								state.transcribeArea.SetText(fmt.Sprintf("%s\nHTTP Response:\n%s", state.transcribeArea.Text, truncated))
+							})
+						}
+					case "datetime":
+						detail = "retrieve date and time"
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\n\n[Action %d/%d]: Executing tool 'datetime' (%s)...", state.transcribeArea.Text, i+1, len(actions), detail))
+						})
+						if !state.enableDatetime {
+							execErr = fmt.Errorf("datetime tool is disabled in settings")
+						} else {
+							toolResult = time.Now().Format("2006-01-02 15:04:05 Monday")
+							fyne.Do(func() {
+								state.transcribeArea.SetText(fmt.Sprintf("%s\nCurrent Date/Time: %s", state.transcribeArea.Text, toolResult))
+							})
+						}
+					default:
+						execErr = fmt.Errorf("unsupported tool in dialogue mode: %s", act.Tool)
+					}
+
+					if execErr != nil {
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\nExecution error on action %d (%s): %v", state.transcribeArea.Text, i+1, act.Tool, execErr))
+						})
+					} else {
+						fyne.Do(func() {
+							state.transcribeArea.SetText(fmt.Sprintf("%s\nAction %d (%s) executed successfully.", state.transcribeArea.Text, i+1, act.Tool))
+						})
+					}
+
+					time.Sleep(200 * time.Millisecond)
+				}
+
+				// Finalize with speech output
+				var speechToPlay string
+				if customVoiceReply != "" {
+					speechToPlay = customVoiceReply
+					if customVoiceSummary != "" {
+						fyne.Do(func() {
+							state.replyArea.SetText(speechToPlay)
+						})
+					}
+				} else {
+					speechToPlay = removeXMLTags(reply)
+					fyne.Do(func() {
+						state.replyArea.SetText(speechToPlay)
+					})
+				}
+
+				fyne.Do(func() {
+					state.statusLabel.SetText("💬 Playing voice reply...")
+				})
+
+				err = tts.Speak(speechToPlay)
+				if err != nil {
+					fyne.Do(func() {
+						state.transcribeArea.SetText(fmt.Sprintf("%s\nTTS Warning: %v", state.transcribeArea.Text, err))
+					})
+				}
+
+				fyne.Do(func() {
+					state.statusLabel.SetText("Idle. Press and Hold to Talk.")
+				})
+			}()
+		} else {
+			parsedSummary := ai.ParseXMLTag(reply, "summary")
+			parsedReply := ai.ParseXMLTag(reply, "reply")
+
+			var speechToPlay string
+			if parsedSummary != "" && parsedReply != "" {
+				state.lastSummary = parsedSummary
+				speechToPlay = parsedReply
+			} else {
+				cleanSpeech := removeXMLTags(reply)
+				state.lastSummary = fmt.Sprintf("%s\nAI: %s", state.lastSummary, cleanSpeech)
+				speechToPlay = cleanSpeech
+			}
+
+			fyne.Do(func() {
+				state.statusLabel.SetText("💬 Response received! Playing voice...")
+				state.replyArea.SetText(speechToPlay)
+				state.summaryArea.SetText(state.lastSummary)
+				state.transcribeArea.SetText(fmt.Sprintf("Success! Reply fetched from llama-server.\nPassing to system TTS engine..."))
+			})
+
+			// Speak response out loud
+			err = tts.Speak(speechToPlay)
+			if err != nil {
+				fyne.Do(func() {
+					state.transcribeArea.SetText(fmt.Sprintf("%s\nTTS Warning: %v", state.transcribeArea.Text, err))
+				})
+			}
+
+			fyne.Do(func() {
+				state.statusLabel.SetText("Idle. Press and Hold to Talk.")
 			})
 		}
-
-		fyne.Do(func() {
-			state.statusLabel.SetText("Idle. Press and Hold to Talk.")
-		})
 	}(pcmBytes)
 }
 
 func (state *AppState) setupGlobalHotkey() {
-	// Register global hotkey: Right Ctrl + Right Alt
-	hk := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl}, hotkey.Key(0xA5))
-	err := hk.Register()
+	state.hotkeyMutex.Lock()
+	defer state.hotkeyMutex.Unlock()
+
+	// Parse custom config
+	keyString := "0x13" // default Pause/Break
+	var mods []string
+	set, err := ai.LoadSettings()
+	if err == nil {
+		if set.PTTKeyString != "" {
+			keyString = set.PTTKeyString
+		}
+		mods = set.PTTModifiers
+	}
+
+	keyCode := parseKeyCode(keyString, 0x13)
+	hkMods := parseModifiers(mods)
+
+	hk := hotkey.New(hkMods, hotkey.Key(keyCode))
+	err = hk.Register()
 	if err != nil {
-		log.Printf("Global Hotkey Right Ctrl+Right Alt failed to register: %v. Standard PPT button is still fully active.", err)
+		log.Printf("Global Hotkey failed to register: %v. Standard PPT button is still active.", err)
 		return
 	}
 
-	log.Println("Global PPT Hotkey registered: Right Ctrl + Right Alt")
+	if state.pttHotkey != nil {
+		_ = state.pttHotkey.Unregister()
+	}
+	state.pttHotkey = hk
 
-	for {
-		select {
-		case <-hk.Keydown():
-			state.startRecordingFlow()
-		case <-hk.Keyup():
-			state.stopRecordingAndProcessFlow()
+	log.Printf("Global PPT Hotkey registered: keycode=%d, modifiers=%v", keyCode, mods)
+
+	go func() {
+		for {
+			select {
+			case <-hk.Keydown():
+				state.startRecordingFlow()
+			case <-hk.Keyup():
+				state.stopRecordingAndProcessFlow()
+			}
+		}
+	}()
+}
+
+func parseKeyCode(s string, defaultVal int) int {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return defaultVal
+	}
+	switch s {
+	case "space":
+		return 0x20
+	case "pause", "break", "pause/break":
+		return 0x13
+	case "enter", "return":
+		return 0x0D
+	case "escape", "esc":
+		return 0x1B
+	}
+	var val int
+	if strings.HasPrefix(s, "0x") {
+		_, err := fmt.Sscanf(s, "0x%x", &val)
+		if err == nil {
+			return val
+		}
+	} else {
+		_, err := fmt.Sscanf(s, "%d", &val)
+		if err == nil {
+			return val
 		}
 	}
+	return defaultVal
+}
+
+func parseModifiers(mods []string) []hotkey.Modifier {
+	var result []hotkey.Modifier
+	for _, m := range mods {
+		m = strings.ToLower(strings.TrimSpace(m))
+		switch m {
+		case "ctrl", "control":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x02))
+			} else {
+				result = append(result, hotkey.ModCtrl)
+			}
+		case "alt", "menu", "option":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x01))
+			} else if runtime.GOOS == "darwin" {
+				result = append(result, hotkey.Modifier(0x02))
+			} else {
+				result = append(result, hotkey.Mod1)
+			}
+		case "shift":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x04))
+			} else {
+				result = append(result, hotkey.ModShift)
+			}
+		case "win", "super", "command", "cmd":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x08))
+			} else if runtime.GOOS == "darwin" {
+				result = append(result, hotkey.Modifier(0x08))
+			} else {
+				result = append(result, hotkey.Mod4)
+			}
+		}
+	}
+	return result
+}
+
+func performCurlRequest(enable bool, method, url string, headers map[string]string, body string) (string, error) {
+	if !enable {
+		return "", fmt.Errorf("curl actions are disabled in settings")
+	}
+
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = "GET"
+	}
+
+	var reqBody io.Reader
+	if body != "" {
+		reqBody = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, url, reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to create http request: %w", err)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return string(respBytes), nil
+}
+
+func removeXMLTags(text string) string {
+	res := text
+	startTag := "<action>"
+	endTag := "</action>"
+
+	for {
+		startIdx := strings.Index(res, startTag)
+		if startIdx == -1 {
+			break
+		}
+		endIdx := strings.Index(res, endTag)
+		if endIdx == -1 {
+			break
+		}
+		if endIdx > startIdx {
+			res = res[:startIdx] + res[endIdx+len(endTag):]
+		} else {
+			break
+		}
+	}
+	return strings.TrimSpace(res)
 }

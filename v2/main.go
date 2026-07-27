@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -74,10 +75,24 @@ type AppState struct {
 	loopTracker *automation.LoopTracker
 
 	// Safety Checklist Controls
-	mouseCheck  *widget.Check
-	keysCheck   *widget.Check
-	screenCheck *widget.Check
-	appsCheck   *widget.Check
+	mouseCheck    *widget.Check
+	keysCheck     *widget.Check
+	screenCheck   *widget.Check
+	appsCheck     *widget.Check
+	curlCheck     *widget.Check
+	datetimeCheck *widget.Check
+	enableDatetime bool
+
+	// Hotkeys
+	pttHotkey    *hotkey.Hotkey
+	killHotkey   *hotkey.Hotkey
+	hotkeyMutex  sync.Mutex
+
+	// Hotkey GUI fields
+	pttKeyEntry  *widget.Entry
+	pttModsEntry *widget.Entry
+	killKeyEntry *widget.Entry
+	killModsEntry *widget.Entry
 
 	// App Allowlist GUI Controls
 	allowlistContainer *fyne.Container
@@ -142,7 +157,7 @@ func main() {
 	}
 
 	// Build Tab 1: Main Push To Talk / Chat Automation Tab
-	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Right Ctrl+Right Alt to Talk.")
+	state.statusLabel = widget.NewLabel("Idle. Press and Hold Button or Pause/Break to Talk.")
 	state.statusLabel.Alignment = fyne.TextAlignCenter
 	state.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -227,6 +242,17 @@ func main() {
 	})
 	state.appsCheck.SetChecked(true)
 
+	state.curlCheck = widget.NewCheck("Enable HTTP Curl Requests (Web searches, JSON API queries)", func(checked bool) {
+		state.engine.EnableCurl = checked
+	})
+	state.curlCheck.SetChecked(true)
+
+	state.datetimeCheck = widget.NewCheck("Enable Datetime Retrieval (Check current date/time)", func(checked bool) {
+		state.enableDatetime = checked
+	})
+	state.datetimeCheck.SetChecked(true)
+	state.enableDatetime = true
+
 	safetyTabContent := container.NewVBox(
 		widget.NewCard("Safety Gate & Checklist", "Restrict what the AI agent can execute autonomously",
 			container.NewVBox(
@@ -235,9 +261,11 @@ func main() {
 				state.keysCheck,
 				state.screenCheck,
 				state.appsCheck,
+				state.curlCheck,
+				state.datetimeCheck,
 				widget.NewSeparator(),
-				widget.NewLabelWithStyle("Emergency Kill Switch: Win+Z", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-				widget.NewLabel("Pressing the global 'Win+Z' hotkey anytime instantly terminates the YellAtMyPC process and stops the llama-server background loop!"),
+				widget.NewLabelWithStyle("Emergency Kill Switch", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				widget.NewLabel("Pressing your configured emergency kill switch hotkey anytime instantly terminates the YellAtMyPC process and stops the llama-server background loop!"),
 			),
 		),
 	)
@@ -358,6 +386,34 @@ func main() {
 		state.refreshMicrophones()
 	})
 
+	state.pttKeyEntry = widget.NewEntry()
+	state.pttKeyEntry.SetPlaceHolder("PTT Key Code (e.g. 0x13)")
+	state.pttKeyEntry.SetText("0x13")
+
+	state.pttModsEntry = widget.NewEntry()
+	state.pttModsEntry.SetPlaceHolder("PTT Modifiers (e.g. none)")
+
+	state.killKeyEntry = widget.NewEntry()
+	state.killKeyEntry.SetPlaceHolder("Kill Key Code (e.g. 0x5a)")
+	state.killKeyEntry.SetText("0x5a")
+
+	state.killModsEntry = widget.NewEntry()
+	state.killModsEntry.SetPlaceHolder("Kill Modifiers (e.g. win,alt)")
+	state.killModsEntry.SetText("win,alt")
+
+	hotkeyCard := widget.NewCard("Hotkey Settings", "Configure custom global keyboard hotkeys",
+		container.NewVBox(
+			container.NewGridWithColumns(2,
+				container.NewVBox(widget.NewLabel("PTT Key Code (Hex/Dec):"), state.pttKeyEntry),
+				container.NewVBox(widget.NewLabel("PTT Modifiers (comma list):"), state.pttModsEntry),
+			),
+			container.NewGridWithColumns(2,
+				container.NewVBox(widget.NewLabel("Kill Switch Key Code (Hex/Dec):"), state.killKeyEntry),
+				container.NewVBox(widget.NewLabel("Kill Switch Modifiers (comma list):"), state.killModsEntry),
+			),
+		),
+	)
+
 	configTabContent := container.NewVScroll(container.NewVBox(
 		widget.NewCard("Connection Type", "", state.localRadio),
 		container.NewGridWithColumns(2,
@@ -384,6 +440,7 @@ func main() {
 				),
 			),
 		),
+		hotkeyCard,
 		container.NewHBox(layout.NewSpacer(), state.saveBtn),
 	))
 
@@ -445,6 +502,47 @@ func (state *AppState) loadPersistentSettings() {
 	if set.MicrophoneName != "" {
 		state.micSelect.SetSelected(set.MicrophoneName)
 	}
+
+	// Safety Checklist toggles
+	state.mouseCheck.SetChecked(set.EnableMouse)
+	state.engine.EnableMouse = set.EnableMouse
+
+	state.keysCheck.SetChecked(set.EnableKeys)
+	state.engine.EnableKeys = set.EnableKeys
+
+	state.screenCheck.SetChecked(set.EnableScreen)
+	state.engine.EnableScreen = set.EnableScreen
+
+	state.appsCheck.SetChecked(set.EnableApps)
+	state.engine.EnableApps = set.EnableApps
+
+	state.curlCheck.SetChecked(set.EnableCurl)
+	state.engine.EnableCurl = set.EnableCurl
+
+	state.enableDatetime = true
+	if set.PTTKeyString != "" {
+		state.enableDatetime = set.EnableKeys // or standard true
+	}
+	state.datetimeCheck.SetChecked(state.enableDatetime)
+
+	// Whitelisted apps map
+	if len(set.AllowedAppsMap) > 0 {
+		for k, v := range set.AllowedAppsMap {
+			state.engine.AllowedApps.SetAllowed(k, v)
+		}
+		state.refreshAllowlistGUI()
+	}
+
+	// Hotkey GUI fields
+	if set.PTTKeyString != "" {
+		state.pttKeyEntry.SetText(set.PTTKeyString)
+	}
+	state.pttModsEntry.SetText(strings.Join(set.PTTModifiers, ","))
+	if set.KillKeyString != "" {
+		state.killKeyEntry.SetText(set.KillKeyString)
+	}
+	state.killModsEntry.SetText(strings.Join(set.KillModifiers, ","))
+
 	log.Println("Successfully loaded persistent settings from settings.json")
 }
 
@@ -458,6 +556,24 @@ func (state *AppState) saveConfigurationSilent() {
 		state.serverConfig.MmprojFile = state.mmprojSelect.Selected
 	}
 
+	pttMods := strings.Split(state.pttModsEntry.Text, ",")
+	var cleanedPttMods []string
+	for _, m := range pttMods {
+		m = strings.TrimSpace(m)
+		if m != "" && m != "none" {
+			cleanedPttMods = append(cleanedPttMods, m)
+		}
+	}
+
+	killMods := strings.Split(state.killModsEntry.Text, ",")
+	var cleanedKillMods []string
+	for _, m := range killMods {
+		m = strings.TrimSpace(m)
+		if m != "" && m != "none" {
+			cleanedKillMods = append(cleanedKillMods, m)
+		}
+	}
+
 	settings := &ai.AppSettings{
 		IsLocal:           state.serverConfig.IsLocal,
 		Host:              state.hostEntry.Text,
@@ -467,9 +583,23 @@ func (state *AppState) saveConfigurationSilent() {
 		LlamaFile:         state.llamaSelect.Selected,
 		PersonalityPrompt: state.personalityEntryMain.Text,
 		MicrophoneName:    state.micSelect.Selected,
+		EnableMouse:       state.engine.EnableMouse,
+		EnableKeys:        state.engine.EnableKeys,
+		EnableScreen:      state.engine.EnableScreen,
+		EnableApps:        state.engine.EnableApps,
+		EnableCurl:        state.engine.EnableCurl,
+		AllowedAppsMap:    state.engine.AllowedApps.GetList(),
+		PTTKeyString:      strings.TrimSpace(state.pttKeyEntry.Text),
+		PTTModifiers:      cleanedPttMods,
+		KillKeyString:     strings.TrimSpace(state.killKeyEntry.Text),
+		KillModifiers:     cleanedKillMods,
 	}
 
 	_ = ai.SaveSettings(settings)
+
+	// Re-register hotkeys dynamically on save!
+	go state.setupGlobalHotkey()
+	go state.setupEmergencyStopHotkey()
 }
 
 func (state *AppState) saveConfiguration() {
@@ -718,8 +848,9 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 						continue
 					}
 
-					// Loop prevention check
-					argsString := fmt.Sprintf("%s:%v:%v:%s", act.Text, act.X, act.Y, act.Name)
+					// Loop prevention check - footprint includes all action parameters
+					argsString := fmt.Sprintf("text:%s;key:%s;mods:%v;btn:%s;dbl:%v;x:%d;y:%d;name:%s;method:%s;url:%s;body:%s",
+						act.Text, act.Key, act.Modifiers, act.Button, act.Double, act.X, act.Y, act.Name, act.Method, act.URL, act.Body)
 					_, alert, breakConnection := state.loopTracker.TrackAction(act.Tool, argsString)
 
 					if alert != "" {
@@ -754,6 +885,10 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 						detail = "taking desktop screenshot"
 					case "read_selection":
 						detail = "reading current text selection"
+					case "curl_request":
+						detail = fmt.Sprintf("HTTP %s to %s", act.Method, act.URL)
+					case "datetime":
+						detail = "fetching current date and time"
 					default:
 						detail = fmt.Sprintf("unknown parameters for tool %q", act.Tool)
 					}
@@ -794,6 +929,27 @@ func (state *AppState) stopRecordingAndProcessFlow() {
 						if execErr == nil {
 							fyne.Do(func() {
 								state.transcribeArea.SetText(fmt.Sprintf("%s\nCopied Selection Content: %s", state.transcribeArea.Text, text))
+							})
+						}
+					case "curl_request":
+						var toolResult string
+						toolResult, execErr = state.engine.CurlRequest(act.Method, act.URL, act.Headers, act.Body)
+						if execErr == nil {
+							fyne.Do(func() {
+								truncated := toolResult
+								if len(truncated) > 500 {
+									truncated = truncated[:500] + "\n...[truncated]..."
+								}
+								state.transcribeArea.SetText(fmt.Sprintf("%s\nHTTP Response:\n%s", state.transcribeArea.Text, truncated))
+							})
+						}
+					case "datetime":
+						if !state.enableDatetime {
+							execErr = fmt.Errorf("datetime tool is disabled in settings")
+						} else {
+							toolResult := time.Now().Format("2006-01-02 15:04:05 Monday")
+							fyne.Do(func() {
+								state.transcribeArea.SetText(fmt.Sprintf("%s\nCurrent Date/Time: %s", state.transcribeArea.Text, toolResult))
 							})
 						}
 					default:
@@ -895,47 +1051,162 @@ func removeXMLTags(text string) string {
 }
 
 func (state *AppState) setupGlobalHotkey() {
-	// Register global hotkey: Right Ctrl + Right Alt
-	hk := hotkey.New([]hotkey.Modifier{hotkey.ModCtrl}, hotkey.Key(0xA5))
-	err := hk.Register()
+	state.hotkeyMutex.Lock()
+	defer state.hotkeyMutex.Unlock()
+
+	// Parse custom config
+	keyString := "0x13" // default Pause/Break
+	var mods []string
+	set, err := ai.LoadSettings()
+	if err == nil {
+		if set.PTTKeyString != "" {
+			keyString = set.PTTKeyString
+		}
+		mods = set.PTTModifiers
+	}
+
+	keyCode := parseKeyCode(keyString, 0x13)
+	hkMods := parseModifiers(mods)
+
+	hk := hotkey.New(hkMods, hotkey.Key(keyCode))
+	err = hk.Register()
 	if err != nil {
-		log.Printf("Global Hotkey Right Ctrl+Right Alt failed to register: %v. Standard PPT button is still fully active.", err)
+		log.Printf("Global Hotkey failed to register: %v. Standard PPT button is still active.", err)
 		return
 	}
 
-	log.Println("Global PPT Hotkey registered: Right Ctrl + Right Alt")
-
-	for {
-		select {
-		case <-hk.Keydown():
-			state.startRecordingFlow()
-		case <-hk.Keyup():
-			state.stopRecordingAndProcessFlow()
-		}
+	if state.pttHotkey != nil {
+		_ = state.pttHotkey.Unregister()
 	}
+	state.pttHotkey = hk
+
+	log.Printf("Global PPT Hotkey registered: keycode=%d, modifiers=%v", keyCode, mods)
+
+	go func() {
+		for {
+			select {
+			case <-hk.Keydown():
+				state.startRecordingFlow()
+			case <-hk.Keyup():
+				state.stopRecordingAndProcessFlow()
+			}
+		}
+	}()
 }
 
 func (state *AppState) setupEmergencyStopHotkey() {
-	hkStop := hotkey.New([]hotkey.Modifier{hotkey.Modifier(0x08)}, hotkey.Key(0x5a))
-	err := hkStop.Register()
+	state.hotkeyMutex.Lock()
+	defer state.hotkeyMutex.Unlock()
+
+	// Parse custom config
+	keyString := "0x5a" // default Z
+	mods := []string{"win", "alt"}
+	set, err := ai.LoadSettings()
+	if err == nil {
+		if set.KillKeyString != "" {
+			keyString = set.KillKeyString
+			mods = set.KillModifiers
+		}
+	}
+
+	keyCode := parseKeyCode(keyString, 0x5a)
+	hkMods := parseModifiers(mods)
+
+	hkStop := hotkey.New(hkMods, hotkey.Key(keyCode))
+	err = hkStop.Register()
 	if err != nil {
-		log.Printf("Emergency Hotkey Win+Z failed to register: %v", err)
+		log.Printf("Emergency Hotkey failed to register: %v", err)
 		return
 	}
 
-	log.Println("Emergency Kill Switch active: Press Win+Z anytime to immediately close application.")
+	if state.killHotkey != nil {
+		_ = state.killHotkey.Unregister()
+	}
+	state.killHotkey = hkStop
 
-	for {
-		select {
-		case <-hkStop.Keydown():
-			log.Println("⚠️ EMERGENCY STOP TRIGGERED! Stopping llama-server and exiting...")
-			if state.recorder != nil {
-				state.recorder.Close()
+	log.Printf("Emergency Kill Switch registered: keycode=%d, modifiers=%v", keyCode, mods)
+
+	go func() {
+		for {
+			select {
+			case <-hkStop.Keydown():
+				log.Println("⚠️ EMERGENCY STOP TRIGGERED! Stopping llama-server and exiting...")
+				if state.recorder != nil {
+					state.recorder.Close()
+				}
+				_ = state.llamaMgr.StopServer()
+				os.Exit(0)
 			}
-			_ = state.llamaMgr.StopServer()
-			os.Exit(0)
+		}
+	}()
+}
+
+func parseKeyCode(s string, defaultVal int) int {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return defaultVal
+	}
+	switch s {
+	case "space":
+		return 0x20
+	case "pause", "break", "pause/break":
+		return 0x13
+	case "enter", "return":
+		return 0x0D
+	case "escape", "esc":
+		return 0x1B
+	}
+	var val int
+	if strings.HasPrefix(s, "0x") {
+		_, err := fmt.Sscanf(s, "0x%x", &val)
+		if err == nil {
+			return val
+		}
+	} else {
+		_, err := fmt.Sscanf(s, "%d", &val)
+		if err == nil {
+			return val
 		}
 	}
+	return defaultVal
+}
+
+func parseModifiers(mods []string) []hotkey.Modifier {
+	var result []hotkey.Modifier
+	for _, m := range mods {
+		m = strings.ToLower(strings.TrimSpace(m))
+		switch m {
+		case "ctrl", "control":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x02))
+			} else {
+				result = append(result, hotkey.ModCtrl)
+			}
+		case "alt", "menu", "option":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x01))
+			} else if runtime.GOOS == "darwin" {
+				result = append(result, hotkey.Modifier(0x02))
+			} else {
+				result = append(result, hotkey.Mod1)
+			}
+		case "shift":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x04))
+			} else {
+				result = append(result, hotkey.ModShift)
+			}
+		case "win", "super", "command", "cmd":
+			if runtime.GOOS == "windows" {
+				result = append(result, hotkey.Modifier(0x08))
+			} else if runtime.GOOS == "darwin" {
+				result = append(result, hotkey.Modifier(0x08))
+			} else {
+				result = append(result, hotkey.Mod4)
+			}
+		}
+	}
+	return result
 }
 
 // Custom Green HoldButton subclassing widget.Button directly
