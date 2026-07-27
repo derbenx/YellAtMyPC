@@ -567,6 +567,10 @@ func (state *AppState) loadPersistentSettings() {
 }
 
 func (state *AppState) saveConfigurationSilent() {
+	if state.hostEntry == nil || state.portEntry == nil || state.personalityEntryMain == nil || state.pttKeyEntry == nil || state.pttModsEntry == nil || state.killKeyEntry == nil || state.killModsEntry == nil {
+		return // UI elements not fully initialized yet
+	}
+
 	state.serverConfig.Host = state.hostEntry.Text
 	state.serverConfig.Port = state.portEntry.Text
 	state.serverConfig.PersonalityPrompt = state.personalityEntryMain.Text
