@@ -46,6 +46,25 @@ func (e *readOnlyEntry) TypedKey(k *fyne.KeyEvent)    {}
 func (e *readOnlyEntry) FocusGained()                 {}
 func (e *readOnlyEntry) FocusLost()                   {}
 
+type fixedHeightLayout struct {
+	height float32
+}
+
+func (l *fixedHeightLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return fyne.NewSize(0, l.height)
+}
+
+func (l *fixedHeightLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	for _, obj := range objects {
+		obj.Resize(fyne.NewSize(size.Width, l.height))
+		obj.Move(fyne.NewPos(0, 0))
+	}
+}
+
+func newFixedHeightContainer(height float32, obj fyne.CanvasObject) *fyne.Container {
+	return container.New(&fixedHeightLayout{height: height}, obj)
+}
+
 type AppState struct {
 	serverConfig    ai.ServerConfig
 	llamaMgr        *ai.LlamaManager
@@ -144,7 +163,7 @@ func main() {
 	state.personalityEntryMain.Wrapping = fyne.TextWrapWord // Word wrap enabled!
 	state.personalityEntryMain.OnChanged = func(text string) {
 		state.serverConfig.PersonalityPrompt = text
-		state.debouncedSave()
+		state.debouncedSave(5 * time.Second)
 	}
 
 	// Build Tab 1: Main Push To Talk / Chat Automation Tab
@@ -192,7 +211,7 @@ func main() {
 		state.statusLabel, // Status label right above the green PTT button
 		holdButton,
 		widget.NewLabel("System Status Log:"),
-		container.NewGridWrap(fyne.NewSize(330, 110), state.transcribeArea), // ~4 lines tall
+		newFixedHeightContainer(110, state.transcribeArea), // ~4 lines tall, beautifully resizable width
 	)
 
 	// Right Column:
@@ -201,10 +220,10 @@ func main() {
 	//   - AI Agent Reply & Tool Outputs (previously reply position)
 	rightSide := container.NewVBox(
 		widget.NewLabel("AI Memory & Conversation Summary:"),
-		container.NewGridWrap(fyne.NewSize(330, 140), state.summaryArea),
+		newFixedHeightContainer(140, state.summaryArea),
 		clearHistoryBtn, // Placed beautifully directly under the summary box!
 		widget.NewLabel("AI Agent Spoken Reply Text:"),
-		container.NewGridWrap(fyne.NewSize(330, 140), state.replyArea),
+		newFixedHeightContainer(140, state.replyArea),
 	)
 
 	mainTabContent := container.NewBorder(
@@ -215,34 +234,45 @@ func main() {
 	// Build Tab 2: Safety Checklist Tab
 	state.mouseCheck = widget.NewCheck("Enable Mouse Actions (Smooth Movement, Clicking)", func(checked bool) {
 		state.engine.EnableMouse = checked
+		state.debouncedSave(2 * time.Second)
 	})
-	state.mouseCheck.SetChecked(true)
+	state.mouseCheck.SetChecked(false)
+	state.engine.EnableMouse = false
 
 	state.keysCheck = widget.NewCheck("Enable Keyboard Actions (Typing strings, Special keys, Copy selection)", func(checked bool) {
 		state.engine.EnableKeys = checked
+		state.debouncedSave(2 * time.Second)
 	})
-	state.keysCheck.SetChecked(true)
+	state.keysCheck.SetChecked(false)
+	state.engine.EnableKeys = false
 
 	state.screenCheck = widget.NewCheck("Enable Screenshot Capture (Allows the AI to 'see' the screen coordinates)", func(checked bool) {
 		state.engine.EnableScreen = checked
+		state.debouncedSave(2 * time.Second)
 	})
-	state.screenCheck.SetChecked(true)
+	state.screenCheck.SetChecked(false)
+	state.engine.EnableScreen = false
 
 	state.appsCheck = widget.NewCheck("Enable Launching Apps (Allow execution of files in your whitelist)", func(checked bool) {
 		state.engine.EnableApps = checked
+		state.debouncedSave(2 * time.Second)
 	})
-	state.appsCheck.SetChecked(true)
+	state.appsCheck.SetChecked(false)
+	state.engine.EnableApps = false
 
 	state.curlCheck = widget.NewCheck("Enable HTTP Curl Requests (Web searches, JSON API queries)", func(checked bool) {
 		state.engine.EnableCurl = checked
+		state.debouncedSave(2 * time.Second)
 	})
-	state.curlCheck.SetChecked(true)
+	state.curlCheck.SetChecked(false)
+	state.engine.EnableCurl = false
 
 	state.datetimeCheck = widget.NewCheck("Enable Datetime Retrieval (Check current date/time)", func(checked bool) {
 		state.enableDatetime = checked
+		state.debouncedSave(2 * time.Second)
 	})
-	state.datetimeCheck.SetChecked(true)
-	state.enableDatetime = true
+	state.datetimeCheck.SetChecked(false)
+	state.enableDatetime = false
 
 	safetyTabContent := container.NewVBox(
 		widget.NewCard("Safety Gate & Checklist", "Restrict what the AI agent can execute autonomously",
@@ -281,6 +311,7 @@ func main() {
 		state.newAppNameEntry.SetText("")
 		state.newAppPathEntry.SetText("")
 		state.refreshAllowlistGUI()
+		state.debouncedSave(2 * time.Second)
 	})
 
 	allowlistTabContent := container.NewVScroll(container.NewVBox(
@@ -338,20 +369,20 @@ func main() {
 				state.launchBtn.Disable()
 			}
 		}
-		state.saveConfigurationSilent()
+		state.debouncedSave(2 * time.Second)
 	})
 
 	state.hostEntry = widget.NewEntry()
 	state.hostEntry.SetText("127.0.0.1")
 	state.hostEntry.Disable()
 	state.hostEntry.OnChanged = func(s string) {
-		state.debouncedSave()
+		state.debouncedSave(2 * time.Second)
 	}
 
 	state.portEntry = widget.NewEntry()
 	state.portEntry.SetText("8080")
 	state.portEntry.OnChanged = func(s string) {
-		state.debouncedSave()
+		state.debouncedSave(2 * time.Second)
 	}
 
 	// Microphone select dropdown on setup
@@ -363,17 +394,17 @@ func main() {
 				break
 			}
 		}
-		state.saveConfigurationSilent()
+		state.debouncedSave(2 * time.Second)
 	})
 
 	state.ggufSelect = widget.NewSelect(nil, func(s string) {
-		state.saveConfigurationSilent()
+		state.debouncedSave(2 * time.Second)
 	})
 	state.mmprojSelect = widget.NewSelect(nil, func(s string) {
-		state.saveConfigurationSilent()
+		state.debouncedSave(2 * time.Second)
 	})
 	state.llamaSelect = widget.NewSelect(nil, func(s string) {
-		state.saveConfigurationSilent()
+		state.debouncedSave(2 * time.Second)
 	})
 
 	state.launchBtn = widget.NewButtonWithIcon("Launch Local Llama", theme.MediaPlayIcon(), func() {
@@ -391,27 +422,27 @@ func main() {
 	state.pttKeyEntry.SetPlaceHolder("PTT Key Code (e.g. 0x13)")
 	state.pttKeyEntry.SetText("0x13")
 	state.pttKeyEntry.OnChanged = func(s string) {
-		state.debouncedSave()
+		state.debouncedSave(2 * time.Second)
 	}
 
 	state.pttModsEntry = widget.NewEntry()
 	state.pttModsEntry.SetPlaceHolder("PTT Modifiers (e.g. none)")
 	state.pttModsEntry.OnChanged = func(s string) {
-		state.debouncedSave()
+		state.debouncedSave(2 * time.Second)
 	}
 
 	state.killKeyEntry = widget.NewEntry()
 	state.killKeyEntry.SetPlaceHolder("Kill Key Code (e.g. 0x5a)")
 	state.killKeyEntry.SetText("0x5a")
 	state.killKeyEntry.OnChanged = func(s string) {
-		state.debouncedSave()
+		state.debouncedSave(2 * time.Second)
 	}
 
 	state.killModsEntry = widget.NewEntry()
 	state.killModsEntry.SetPlaceHolder("Kill Modifiers (e.g. win,alt)")
 	state.killModsEntry.SetText("win,alt")
 	state.killModsEntry.OnChanged = func(s string) {
-		state.debouncedSave()
+		state.debouncedSave(2 * time.Second)
 	}
 
 	hotkeyCard := widget.NewCard("Hotkey Settings", "Configure custom global keyboard hotkeys",
@@ -538,10 +569,7 @@ func (state *AppState) loadPersistentSettings() {
 		state.curlCheck.SetChecked(set.EnableCurl)
 		state.engine.EnableCurl = set.EnableCurl
 
-		state.enableDatetime = true
-		if set.PTTKeyString != "" {
-			state.enableDatetime = set.EnableKeys
-		}
+		state.enableDatetime = set.EnableDatetime
 		state.datetimeCheck.SetChecked(state.enableDatetime)
 
 		// Whitelisted apps map
@@ -612,6 +640,7 @@ func (state *AppState) saveConfigurationSilent() {
 		EnableScreen:      state.engine.EnableScreen,
 		EnableApps:        state.engine.EnableApps,
 		EnableCurl:        state.engine.EnableCurl,
+		EnableDatetime:    state.enableDatetime,
 		AllowedAppsMap:    state.engine.AllowedApps.GetList(),
 		PTTKeyString:      strings.TrimSpace(state.pttKeyEntry.Text),
 		PTTModifiers:      cleanedPttMods,
@@ -626,12 +655,12 @@ func (state *AppState) saveConfigurationSilent() {
 	go state.setupEmergencyStopHotkey()
 }
 
-func (state *AppState) debouncedSave() {
+func (state *AppState) debouncedSave(delay time.Duration) {
 	state.recordingMutex.Lock()
 	if state.saveTimer != nil {
 		state.saveTimer.Stop()
 	}
-	state.saveTimer = time.AfterFunc(1*time.Second, func() {
+	state.saveTimer = time.AfterFunc(delay, func() {
 		state.saveConfigurationSilent()
 	})
 	state.recordingMutex.Unlock()
@@ -681,6 +710,7 @@ func (state *AppState) refreshAllowlistGUI() {
 		btn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
 			state.engine.AllowedApps.RemoveAllowed(appKey)
 			state.refreshAllowlistGUI()
+			state.debouncedSave(2 * time.Second)
 		})
 		row := container.NewHBox(lbl, layout.NewSpacer(), btn)
 		state.allowlistContainer.Add(row)

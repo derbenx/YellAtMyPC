@@ -32,7 +32,6 @@ func NewAllowedApps() *AllowedApps {
 	if runtime.GOOS == "windows" {
 		apps.appMap["notepad"] = "notepad.exe"
 		apps.appMap["calc"] = "calc.exe"
-		apps.appMap["cmd"] = "cmd.exe"
 		apps.appMap["explorer"] = "explorer.exe"
 		apps.appMap["mspaint"] = "mspaint.exe"
 	} else if runtime.GOOS == "linux" {

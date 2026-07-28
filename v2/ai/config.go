@@ -21,6 +21,7 @@ type AppSettings struct {
 	EnableScreen      bool              `json:"enable_screen"`
 	EnableApps        bool              `json:"enable_apps"`
 	EnableCurl        bool              `json:"enable_curl"`
+	EnableDatetime    bool              `json:"enable_datetime"`
 	AllowedAppsMap    map[string]string `json:"allowed_apps_map"`
 	// Custom Hotkeys
 	PTTKeyString      string            `json:"ptt_key_string"`
@@ -29,9 +30,9 @@ type AppSettings struct {
 	KillModifiers     []string          `json:"kill_modifiers"`
 }
 
-// LoadSettings attempts to load settings from "settings.json"
+// LoadSettings attempts to load settings from "settingsV2.json"
 func LoadSettings() (*AppSettings, error) {
-	data, err := os.ReadFile("settings.json")
+	data, err := os.ReadFile("settingsV2.json")
 	if err != nil {
 		return nil, err
 	}
@@ -43,11 +44,11 @@ func LoadSettings() (*AppSettings, error) {
 	return &settings, nil
 }
 
-// SaveSettings serializes settings to "settings.json"
+// SaveSettings serializes settings to "settingsV2.json"
 func SaveSettings(settings *AppSettings) error {
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile("settings.json", data, 0644)
+	return os.WriteFile("settingsV2.json", data, 0644)
 }
